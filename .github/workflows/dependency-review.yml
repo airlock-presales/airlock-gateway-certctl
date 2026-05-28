@@ -1,0 +1,50 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Review dependency changes
+    if: ${{ !github.event.repository.private || vars.ENABLE_GITHUB_CODE_SECURITY == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Opt in now to the JavaScript runtime GitHub will make the default in 2026.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: moderate
+
+  skipped-private-repository:
+    name: Dependency Review unavailable for private repository
+    if: ${{ github.event.repository.private && vars.ENABLE_GITHUB_CODE_SECURITY != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Explain why Dependency Review was skipped
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::notice title=Dependency Review skipped::This repository is private/internal. Dependency Review is a GitHub Code Security feature for private/internal repositories. Enable GitHub Code Security for the repository and set repository variable ENABLE_GITHUB_CODE_SECURITY=true, or make the repository public."
