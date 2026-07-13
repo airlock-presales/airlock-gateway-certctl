@@ -117,17 +117,15 @@ func (c *Client) Validate(ctx context.Context) ([]ValidationMessage, error) {
 
 // ActivateConfiguration validates and activates the currently loaded configuration.
 func (c *Client) ActivateConfiguration(ctx context.Context, comment string) error {
-	var body any
-	if comment != "" {
-		body = map[string]any{
-			"comment": comment,
-			"options": map[string]any{
-				"ignoreOutdatedConfiguration": true,
-				"failoverActivation":          false,
-			},
-		}
+	body := map[string]any{
+		"comment": comment,
+		"options": map[string]any{
+			"ignoreOutdatedConfiguration": false,
+			"autoMerge":                   true,
+			"failoverActivation":          true,
+		},
 	}
-	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK)
+	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent)
 }
 
 // DownloadOpenAPISpec downloads the live OpenAPI spec exposed by the Gateway Configuration Center.

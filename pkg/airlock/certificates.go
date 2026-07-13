@@ -43,7 +43,7 @@ func (c *Client) GetSSLCertificate(ctx context.Context, id string) (ResourceAny,
 func (c *Client) CreateSSLCertificate(ctx context.Context, attrs map[string]any) (ResourceAny, error) {
 	body := NewResourceDocument(SSLCertificateType, "", attrs)
 	var doc Document[ResourceAny]
-	if err := c.DoJSON(ctx, http.MethodPost, "/configuration/ssl-certificates", body, &doc, http.StatusCreated); err != nil {
+	if err := c.DoJSON(ctx, http.MethodPost, "/configuration/ssl-certificates", body, &doc, http.StatusOK, http.StatusCreated); err != nil {
 		return ResourceAny{}, err
 	}
 	return doc.Data, nil
@@ -53,7 +53,7 @@ func (c *Client) CreateSSLCertificate(ctx context.Context, attrs map[string]any)
 func (c *Client) UpdateSSLCertificate(ctx context.Context, id string, attrs map[string]any) (ResourceAny, error) {
 	body := NewResourceDocument(SSLCertificateType, id, attrs)
 	var doc Document[ResourceAny]
-	if err := c.DoJSON(ctx, http.MethodPatch, "/configuration/ssl-certificates/"+url.PathEscape(id), body, &doc, http.StatusOK); err != nil {
+	if err := c.DoJSON(ctx, http.MethodPatch, "/configuration/ssl-certificates/"+url.PathEscape(id), body, &doc, http.StatusOK, http.StatusNoContent); err != nil {
 		return ResourceAny{}, err
 	}
 	return doc.Data, nil
@@ -121,14 +121,14 @@ func (c *Client) DisconnectSSLCertificateFromNodes(ctx context.Context, certID s
 // AddVirtualHostCertificateRelationship adds SSL certificate connections on the virtual-host relationship endpoint.
 func (c *Client) AddVirtualHostCertificateRelationship(ctx context.Context, virtualHostID string, certIDs ...string) error {
 	body := NewRelationshipDocument(identifiers(SSLCertificateType, certIDs))
-	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificates"
+	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificate"
 	return c.DoJSON(ctx, http.MethodPatch, path, body, nil, http.StatusNoContent)
 }
 
 // RemoveVirtualHostCertificateRelationship removes SSL certificate connections on the virtual-host relationship endpoint.
 func (c *Client) RemoveVirtualHostCertificateRelationship(ctx context.Context, virtualHostID string, certIDs ...string) error {
 	body := NewRelationshipDocument(identifiers(SSLCertificateType, certIDs))
-	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificates"
+	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificate"
 	return c.DoJSON(ctx, http.MethodDelete, path, body, nil, http.StatusNoContent)
 }
 

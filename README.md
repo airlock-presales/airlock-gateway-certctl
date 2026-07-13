@@ -333,6 +333,55 @@ if err != nil {
 fmt.Println(cert.ID)
 ```
 
+### Transactional certificate synchronization
+
+`Config` contains the Airlock Gateway address, API key, TLS trust, and timeout
+settings. `SyncSSLCertificate` performs the complete Configuration REST API
+sequence documented for [Airlock Gateway 8.6](https://docs.airlock.com/gateway/8.6/index/rest-api/config-rest-api.html)
+and synchronizes the full desired `ssl-certificate` state:
+
+```go
+client, err := airlock.New(airlock.Config{
+    Address: "gateway.example.com",
+    APIKey:  os.Getenv("AIRLOCK_API_KEY"),
+    // InsecureSkipVerify: true, // lab systems only
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+result, err := client.SyncSSLCertificate(
+    context.Background(),
+    "42", // existing Airlock ssl-certificate ID; use "" to create a new resource
+    airlock.CertificateMaterial{
+        CertType:         "SERVER_CERT",
+        Certificate:      string(certificatePEM),
+        CertificateChain: []string{string(intermediatePEM)},
+        PrivateKey:       string(privateKeyPEM),
+    },
+    "Rotate certificate for www.example.com",
+)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("changed=%t certificate=%s key=%s\n",
+    result.Changed,
+    result.Checksums.Certificate,
+    result.Checksums.PrivateKey,
+)
+```
+
+The synchronization compares SHA-256 checksums of the exact supplied
+certificate and private-key bytes. If all material is already identical, no
+configuration write or activation is performed. Otherwise the certificate,
+chain, private key, and optional root CA are sent together in one JSON:API
+create/update request. The loaded configuration is then validated and
+activated before the REST session is terminated.
+
+Airlock Gateway 8.6 does not expose a `name` attribute on `ssl-certificate`
+resources. Keep the resource ID returned by a create operation and pass it to
+subsequent synchronization calls.
+
 ## Implemented endpoints
 
 The client uses the `/airlock/rest` base path and currently includes:

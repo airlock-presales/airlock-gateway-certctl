@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +46,7 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	userAgent  string
+	configMu   sync.Mutex
 }
 
 // Option customizes a Client.
@@ -85,8 +89,51 @@ func WithUserAgent(userAgent string) Option {
 // Use this only for lab systems or when the management interface uses a temporary self-signed certificate.
 func WithInsecureSkipVerify() Option {
 	return func(c *Client) error {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+		transport, err := cloneHTTPTransport(c.httpClient.Transport)
+		if err != nil {
+			return err
+		}
+		tlsConfig := cloneTLSConfig(transport.TLSClientConfig)
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec
+		transport.TLSClientConfig = tlsConfig
+		c.httpClient.Transport = transport
+		return nil
+	}
+}
+
+// WithTrustedCertificate adds a PEM encoded CA certificate to the TLS trust
+// store. trustedCertificate may contain PEM data directly or name a PEM file.
+func WithTrustedCertificate(trustedCertificate string) Option {
+	return func(c *Client) error {
+		value := strings.TrimSpace(trustedCertificate)
+		if value == "" {
+			return errors.New("trusted certificate must not be empty")
+		}
+
+		pemData := []byte(value)
+		if !strings.Contains(value, "-----BEGIN CERTIFICATE-----") {
+			data, err := os.ReadFile(value)
+			if err != nil {
+				return fmt.Errorf("read trusted certificate: %w", err)
+			}
+			pemData = data
+		}
+
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if ok := roots.AppendCertsFromPEM(pemData); !ok {
+			return errors.New("trusted certificate does not contain a valid PEM certificate")
+		}
+
+		transport, err := cloneHTTPTransport(c.httpClient.Transport)
+		if err != nil {
+			return err
+		}
+		tlsConfig := cloneTLSConfig(transport.TLSClientConfig)
+		tlsConfig.RootCAs = roots
+		transport.TLSClientConfig = tlsConfig
 		c.httpClient.Transport = transport
 		return nil
 	}
@@ -124,8 +171,9 @@ func NewClient(host, apiKey string, opts ...Option) (*Client, error) {
 		baseURL: parsed,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Jar:     jar,
+			Timeout:   30 * time.Second,
+			Jar:       jar,
+			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
 		userAgent: defaultUserAgent,
 	}
@@ -148,6 +196,24 @@ func appendBasePath(current, suffix string) string {
 		return current
 	}
 	return current + suffix
+}
+
+func cloneHTTPTransport(roundTripper http.RoundTripper) (*http.Transport, error) {
+	if roundTripper == nil {
+		return http.DefaultTransport.(*http.Transport).Clone(), nil
+	}
+	transport, ok := roundTripper.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("TLS options require *http.Transport, got %T", roundTripper)
+	}
+	return transport.Clone(), nil
+}
+
+func cloneTLSConfig(config *tls.Config) *tls.Config {
+	if config == nil {
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return config.Clone()
 }
 
 func (c *Client) endpoint(path string) string {
