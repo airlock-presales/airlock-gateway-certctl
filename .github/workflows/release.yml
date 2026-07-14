@@ -46,7 +46,7 @@ jobs:
           echo "Release tag: $tag"
 
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.release-tag.outputs.tag }}
           fetch-depth: 0
@@ -134,7 +134,7 @@ jobs:
 
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
