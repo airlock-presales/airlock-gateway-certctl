@@ -62,16 +62,3 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
-
-  skipped-private-repository:
-    name: CodeQL unavailable for private repository
-    if: ${{ github.event.repository.private && vars.ENABLE_GITHUB_CODE_SECURITY != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Explain why CodeQL was skipped
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::notice title=CodeQL skipped::This repository is private/internal. GitHub Code Security or GitHub Advanced Security must be enabled before CodeQL code scanning results can be uploaded. Enable it for the repository and set repository variable ENABLE_GITHUB_CODE_SECURITY=true, or make the repository public."

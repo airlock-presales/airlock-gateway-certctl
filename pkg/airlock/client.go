@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -24,6 +23,8 @@ const defaultUserAgent = "airlock-certctl/0.1"
 type Error struct {
 	StatusCode int
 	Body       string
+	Errors     []APIErrorBody
+	Meta       map[string]any
 }
 
 func (e *Error) Error() string {
@@ -40,13 +41,33 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
-// Client is a small Airlock Gateway REST client.
+// IsConflict reports whether Airlock rejected an operation because of a
+// conflict, including activation of an outdated configuration working copy.
+func IsConflict(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict
+}
+
+func newResponseError(statusCode int, data []byte) *Error {
+	result := &Error{StatusCode: statusCode, Body: string(data)}
+	var document struct {
+		Errors []APIErrorBody `json:"errors"`
+		Meta   map[string]any `json:"meta"`
+	}
+	if json.Unmarshal(data, &document) == nil {
+		result.Errors = document.Errors
+		result.Meta = document.Meta
+	}
+	return result
+}
+
+// Client provides typed Airlock Gateway certificate lifecycle operations.
+// Low-level JSON:API methods are also available as an advanced escape hatch.
 type Client struct {
 	baseURL    *url.URL
 	apiKey     string
 	httpClient *http.Client
 	userAgent  string
-	configMu   sync.Mutex
 }
 
 // Option customizes a Client.
@@ -187,6 +208,27 @@ func NewClient(host, apiKey string, opts ...Option) (*Client, error) {
 	return client, nil
 }
 
+// newSessionClient creates an independent view of the client with its own
+// cookie jar. Airlock identifies a configuration working copy through the
+// JSESSIONID cookie, so sharing a jar between concurrent transactions would
+// mix their server-side state. The transport is deliberately shared: Go HTTP
+// transports are concurrency-safe and sharing it preserves connection pools.
+func (c *Client) newSessionClient() (*Client, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create transaction cookie jar: %w", err)
+	}
+	httpClient := *c.httpClient
+	httpClient.Jar = jar
+	baseURL := *c.baseURL
+	return &Client{
+		baseURL:    &baseURL,
+		apiKey:     c.apiKey,
+		httpClient: &httpClient,
+		userAgent:  c.userAgent,
+	}, nil
+}
+
 func appendBasePath(current, suffix string) string {
 	current = strings.TrimRight(current, "/")
 	if current == "" {
@@ -272,7 +314,7 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, in any, out an
 
 	if !statusExpected(res.StatusCode, expected...) {
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-		return &Error{StatusCode: res.StatusCode, Body: string(data)}
+		return newResponseError(res.StatusCode, data)
 	}
 
 	if out == nil {
@@ -305,7 +347,7 @@ func (c *Client) DoRaw(ctx context.Context, method, path, contentType string, in
 
 	if !statusExpected(res.StatusCode, expected...) {
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-		return &Error{StatusCode: res.StatusCode, Body: string(data)}
+		return newResponseError(res.StatusCode, data)
 	}
 
 	if out != nil {

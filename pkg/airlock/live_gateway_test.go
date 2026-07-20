@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -17,12 +18,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/youmark/pkcs8"
 )
 
-// TestLiveGatewayCertificateLifecycle is an opt-in integration test. It creates
-// and activates a short-lived self-signed certificate, binds it to the selected
-// test virtual host, verifies idempotency and rotation, and restores the exact
-// configuration that was active before the test.
+// TestLiveGatewayCertificateLifecycle is an opt-in integration test. It
+// addresses a certificate only through the logical virtual-host name, deploys
+// self-signed pairs, verifies idempotency and appliance-side conflict
+// rejection, and restores the exact configuration active before the test.
 // It never runs during ordinary `go test ./...` invocations.
 func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 	if os.Getenv("AIRLOCK_LIVE_TEST") != "1" {
@@ -37,7 +40,7 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 
 	fqdn := envOrDefault("AIRLOCK_TEST_FQDN", "test.airlock.local")
 	virtualHostName := envOrDefault("AIRLOCK_TEST_VIRTUAL_HOST", "test")
-	serviceAddress := strings.TrimSpace(os.Getenv("AIRLOCK_TEST_SERVICE_ADDRESS"))
+	serviceAddress := envOrDefault("AIRLOCK_TEST_SERVICE_ADDRESS", net.JoinHostPort(fqdn, "443"))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -52,18 +55,20 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 	}
 	t.Log("connected client configuration prepared")
 
-	first, firstSerial := liveCertificateMaterial(t, fqdn)
-	second, secondSerial := liveCertificateMaterial(t, fqdn)
-	mismatched, _ := liveCertificateMaterial(t, fqdn)
-	mismatched.PrivateKey = second.PrivateKey
+	first, firstSerial := liveCertificateBundle(t, fqdn)
+	second, secondSerial := liveCertificateBundle(t, fqdn)
+	third, _ := liveCertificateBundle(t, fqdn)
+	encrypted, encryptedSerial := liveEncryptedCertificateBundle(t, fqdn)
+	mismatchCertificatePEM, _, _ := livePEMPair(t, fqdn)
+	_, mismatchKeyPEM, _ := livePEMPair(t, fqdn)
 
-	var certificateID string
-	var virtualHostID string
+	var certificateID CertificateID
 	var baselineConfigurationID string
+	var baselineCertificate *ManagedCertificate
 	var activated bool
 	defer func() {
 		if activated {
-			restoreLiveConfiguration(t, client, baselineConfigurationID, certificateID)
+			restoreLiveConfiguration(t, client, baselineConfigurationID, certificateID, baselineCertificate, virtualHostName)
 		}
 	}()
 
@@ -72,49 +77,38 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 		t.Fatalf("start create transaction: %v", err)
 	}
 	t.Log("configuration transaction started")
-	baselineConfigurationID, err = currentLiveConfigurationID(ctx, client)
+	baselineConfigurationID, err = currentLiveConfigurationID(ctx, transaction.client)
 	if err != nil {
 		_ = transaction.Abort()
 		t.Fatalf("determine baseline configuration: %v", err)
 	}
 	t.Logf("baseline configuration is %s", baselineConfigurationID)
-	virtualHosts, err := listLiveVirtualHosts(ctx, client)
-	if err != nil {
+	baseline, baselineErr := transaction.GetCertificate(ForVirtualHost(VirtualHostName(virtualHostName)))
+	if baselineErr == nil {
+		baselineCertificate = &baseline
+	} else if !strings.Contains(baselineErr.Error(), "has no SSL certificate") {
 		_ = transaction.Abort()
-		t.Fatalf("list virtual hosts: %v", err)
+		t.Fatalf("read baseline certificate: %v", baselineErr)
 	}
-	virtualHostID = findLiveVirtualHost(virtualHosts, virtualHostName, fqdn)
-	if virtualHostID == "" {
-		_ = transaction.Abort()
-		t.Fatalf("virtual host %q for %q not found; available: %s", virtualHostName, fqdn, summarizeLiveVirtualHosts(virtualHosts))
+	if err := transaction.Abort(); err != nil {
+		t.Fatalf("finish baseline transaction: %v", err)
 	}
-	t.Logf("test virtual host resolved to ID %s", virtualHostID)
 
-	created, err := transaction.SyncSSLCertificate("", first)
+	created, err := client.SyncCertificate(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), first, SyncOptions{
+		ActivationComment: "airlock-certctl live test: deploy certificate pair",
+	})
 	if err != nil {
-		_ = transaction.Abort()
-		t.Fatalf("create certificate and key: %v", err)
+		t.Fatalf("deploy certificate and key: %v", err)
 	}
-	certificateID = created.Resource.ID
-	if certificateID == "" || !created.Created || !created.Changed {
-		_ = transaction.Abort()
-		t.Fatalf("unexpected create result: id=%q created=%t changed=%t", certificateID, created.Created, created.Changed)
+	certificateID = created.Certificate.ID
+	if certificateID == 0 || !created.Changed {
+		t.Fatalf("unexpected deploy result: id=%q created=%t changed=%t", certificateID, created.Created, created.Changed)
 	}
-	if created.Checksums != first.Checksums() {
-		_ = transaction.Abort()
-		t.Fatalf("create checksums do not match supplied material")
-	}
-	t.Logf("certificate pair created as resource %s", certificateID)
-	if err := client.ConnectSSLCertificateToVirtualHosts(ctx, certificateID, virtualHostID); err != nil {
-		_ = transaction.Abort()
-		t.Fatalf("connect certificate to test virtual host: %v", err)
-	}
-	t.Log("certificate relationship staged")
-	if err := transaction.Commit("airlock-certctl live test: create certificate pair"); err != nil {
-		t.Fatalf("commit create transaction: %v", err)
+	if created.Certificate.Checksum != first.Checksum {
+		t.Fatalf("deployed bundle checksum does not match supplied material")
 	}
 	activated = true
-	t.Log("certificate pair and relationship activated")
+	t.Logf("certificate pair deployed through virtual host %q as resource %s", virtualHostName, certificateID)
 
 	if serviceAddress != "" {
 		if err := waitForLiveCertificate(ctx, serviceAddress, fqdn, firstSerial); err != nil {
@@ -122,44 +116,176 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 		}
 	}
 
-	unchanged, err := client.SyncSSLCertificate(ctx, certificateID, first, "airlock-certctl live test: no-op")
+	unchanged, err := client.SyncCertificate(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), first, SyncOptions{
+		ActivationComment: "airlock-certctl live test: no-op",
+	})
 	if err != nil {
 		t.Fatalf("repeat identical synchronization: %v", err)
 	}
-	if unchanged.Changed || unchanged.Created {
-		t.Fatalf("identical material was not treated as a no-op: created=%t changed=%t", unchanged.Created, unchanged.Changed)
+	if unchanged.Changed || unchanged.Created || unchanged.Bound {
+		t.Fatalf("identical material was not treated as a no-op: %#v", unchanged)
 	}
 	t.Log("identical synchronization correctly completed without a write")
 
-	rotated, err := client.SyncSSLCertificate(ctx, certificateID, second, "airlock-certctl live test: rotate certificate pair")
+	firstConcurrent, err := client.StartConfigurationTransaction(ctx)
 	if err != nil {
-		t.Fatalf("rotate certificate and key: %v", err)
+		t.Fatalf("start first concurrent transaction: %v", err)
 	}
-	if rotated.Created || !rotated.Changed || rotated.Resource.ID != certificateID {
-		t.Fatalf("unexpected rotation result: id=%q created=%t changed=%t", rotated.Resource.ID, rotated.Created, rotated.Changed)
+	secondConcurrent, err := client.StartConfigurationTransaction(ctx)
+	if err != nil {
+		_ = firstConcurrent.Abort()
+		t.Fatalf("start second concurrent transaction: %v", err)
 	}
-	if rotated.Checksums != second.Checksums() {
-		t.Fatalf("rotation checksums do not match supplied material")
+	if _, err := firstConcurrent.SyncCertificate(ForVirtualHost(VirtualHostName(virtualHostName)), second); err != nil {
+		_ = firstConcurrent.Abort()
+		_ = secondConcurrent.Abort()
+		t.Fatalf("stage first concurrent rotation: %v", err)
 	}
-	t.Log("certificate and private key rotated in place")
+	if _, err := secondConcurrent.SyncCertificate(ForVirtualHost(VirtualHostName(virtualHostName)), third); err != nil {
+		_ = firstConcurrent.Abort()
+		_ = secondConcurrent.Abort()
+		t.Fatalf("stage second concurrent rotation: %v", err)
+	}
+	if err := firstConcurrent.Commit("airlock-certctl live test: first concurrent rotation"); err != nil {
+		_ = secondConcurrent.Abort()
+		t.Fatalf("commit first concurrent rotation: %v", err)
+	}
+	if err := secondConcurrent.Commit("airlock-certctl live test: stale concurrent rotation"); err == nil {
+		t.Fatal("Airlock accepted activation from an outdated concurrent session")
+	} else {
+		t.Logf("Airlock rejected the stale transaction as expected: %v", err)
+	}
 
-	assertLiveMaterial(t, ctx, client, certificateID, second)
-	t.Log("rotated material read back and verified")
+	assertLiveBundle(t, ctx, client, virtualHostName, second)
+	t.Log("winning certificate and private key read back and checksum-verified")
 	if serviceAddress != "" {
 		if err := waitForLiveCertificate(ctx, serviceAddress, fqdn, secondSerial); err != nil {
 			t.Fatalf("verify rotated served certificate: %v", err)
 		}
 	}
 
-	if _, err := client.SyncSSLCertificate(ctx, certificateID, mismatched, "airlock-certctl live test: reject mismatch"); err == nil {
+	encryptedResult, err := client.SyncCertificate(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), encrypted, SyncOptions{
+		ActivationComment: "airlock-certctl live test: encrypted PKCS#8 key",
+	})
+	if err != nil {
+		t.Fatalf("deploy encrypted PKCS#8 key: %v", err)
+	}
+	if !encryptedResult.Changed || encryptedResult.Certificate.Checksum != encrypted.Checksum {
+		t.Fatalf("unexpected encrypted-key result: %#v", encryptedResult)
+	}
+	assertLiveBundle(t, ctx, client, virtualHostName, encrypted)
+	t.Log("encrypted PKCS#8 key accepted, activated, and read back consistently")
+	encryptedNoOp, err := client.SyncCertificate(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), encrypted, SyncOptions{})
+	if err != nil {
+		t.Fatalf("repeat encrypted-key synchronization: %v", err)
+	}
+	if encryptedNoOp.Changed {
+		t.Fatal("identical encrypted key and certificate were not treated as a no-op")
+	}
+	if serviceAddress != "" {
+		if err := waitForLiveCertificate(ctx, serviceAddress, fqdn, encryptedSerial); err != nil {
+			t.Fatalf("verify certificate deployed with encrypted key: %v", err)
+		}
+	}
+
+	if _, err := ParseCertificateBundle(CertificateBundleInput{
+		CertificatePEM: mismatchCertificatePEM,
+		PrivateKeyPEM:  mismatchKeyPEM,
+	}); err == nil {
 		t.Fatal("mismatched certificate and private key were accepted")
 	}
-	t.Log("mismatched certificate/private-key pair rejected")
-	assertLiveMaterial(t, ctx, client, certificateID, second)
+	t.Log("mismatched certificate/private-key pair rejected locally")
+	assertLiveBundle(t, ctx, client, virtualHostName, encrypted)
 	t.Log("Gateway material remained unchanged after mismatch rejection")
 }
 
-func liveCertificateMaterial(t *testing.T, fqdn string) (CertificateMaterial, *big.Int) {
+// TestLiveGatewayConcurrentReadSessions verifies that one Client can operate
+// several independent Airlock working sessions concurrently.
+func TestLiveGatewayConcurrentReadSessions(t *testing.T) {
+	if os.Getenv("AIRLOCK_LIVE_TEST") != "1" {
+		t.Skip("set AIRLOCK_LIVE_TEST=1 to run live Gateway tests")
+	}
+	host := strings.TrimSpace(os.Getenv("AIRLOCK_HOST"))
+	apiKey := strings.TrimSpace(os.Getenv("AIRLOCK_API_KEY"))
+	virtualHostName := VirtualHostName(envOrDefault("AIRLOCK_TEST_VIRTUAL_HOST", "test"))
+	client, err := New(Config{Address: host, APIKey: apiKey, Timeout: 90 * time.Second, InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	const workers = 4
+	errorsChannel := make(chan error, workers)
+	started := time.Now()
+	for range workers {
+		go func() {
+			_, err := client.GetCertificate(ctx, ForVirtualHost(virtualHostName))
+			errorsChannel <- err
+		}()
+	}
+	for range workers {
+		if err := <-errorsChannel; err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("%d independent read sessions completed in %s", workers, time.Since(started))
+}
+
+// TestLiveGatewayOpenAPIContract checks the typed surface against the schema
+// actually published by the target appliance.
+func TestLiveGatewayOpenAPIContract(t *testing.T) {
+	if os.Getenv("AIRLOCK_LIVE_TEST") != "1" {
+		t.Skip("set AIRLOCK_LIVE_TEST=1 to run live Gateway tests")
+	}
+	client, err := New(Config{
+		Address:            strings.TrimSpace(os.Getenv("AIRLOCK_HOST")),
+		APIKey:             strings.TrimSpace(os.Getenv("AIRLOCK_API_KEY")),
+		Timeout:            90 * time.Second,
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := client.DownloadOpenAPISpec(context.Background(), "json")
+	if err != nil {
+		t.Fatalf("download live OpenAPI schema: %v", err)
+	}
+	var schema struct {
+		Paths      map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("decode live OpenAPI schema: %v", err)
+	}
+	for _, path := range []string{
+		"/configuration/ssl-certificates",
+		"/configuration/ssl-certificates/{id}",
+		"/configuration/ssl-certificates/{id}/relationships/virtual-hosts",
+		"/configuration/virtual-hosts",
+		"/configuration/configurations/activate",
+	} {
+		if _, exists := schema.Paths[path]; !exists {
+			t.Errorf("live OpenAPI schema is missing required path %s", path)
+		}
+	}
+	wantTypes := []string{string(ServerCertificate), string(ClientCertificate)}
+	gotTypes := schema.Components.Schemas["SSLCertificateDto"].Properties["certType"].Enum
+	if strings.Join(gotTypes, ",") != strings.Join(wantTypes, ",") {
+		t.Errorf("live certType enum differs: want %v, got %v", wantTypes, gotTypes)
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+	t.Log("live OpenAPI certificate contract matches the typed client")
+}
+
+func livePEMPair(t *testing.T, fqdn string) ([]byte, []byte, *big.Int) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -188,20 +314,47 @@ func liveCertificateMaterial(t *testing.T, fqdn string) (CertificateMaterial, *b
 	if err != nil {
 		t.Fatalf("marshal private key: %v", err)
 	}
-	return CertificateMaterial{
-		CertType:         "SERVER_CERT",
-		Certificate:      string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})),
-		CertificateChain: []string{},
-		PrivateKey:       string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER})),
-	}, serial
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}), serial
 }
 
-func listLiveVirtualHosts(ctx context.Context, client *Client) ([]ResourceAny, error) {
-	var document Document[[]ResourceAny]
-	if err := client.DoJSON(ctx, http.MethodGet, "/configuration/virtual-hosts", nil, &document, http.StatusOK); err != nil {
-		return nil, err
+func liveCertificateBundle(t *testing.T, fqdn string) (CertificateBundle, *big.Int) {
+	t.Helper()
+	certificatePEM, privateKeyPEM, serial := livePEMPair(t, fqdn)
+	bundle, err := ParseCertificateBundle(CertificateBundleInput{
+		Type:           ServerCertificate,
+		CertificatePEM: certificatePEM,
+		PrivateKeyPEM:  privateKeyPEM,
+	})
+	if err != nil {
+		t.Fatalf("parse generated certificate bundle: %v", err)
 	}
-	return document.Data, nil
+	return bundle, serial
+}
+
+func liveEncryptedCertificateBundle(t *testing.T, fqdn string) (CertificateBundle, *big.Int) {
+	t.Helper()
+	certificatePEM, privateKeyPEM, serial := livePEMPair(t, fqdn)
+	block, _ := pem.Decode(privateKeyPEM)
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse generated private key: %v", err)
+	}
+	passphrase := []byte("airlock-certctl-live-test")
+	encryptedDER, err := pkcs8.MarshalPrivateKey(privateKey, passphrase, pkcs8.DefaultOpts)
+	if err != nil {
+		t.Fatalf("encrypt generated private key: %v", err)
+	}
+	bundle, err := ParseCertificateBundle(CertificateBundleInput{
+		Type:                 ServerCertificate,
+		CertificatePEM:       certificatePEM,
+		PrivateKeyPEM:        pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: encryptedDER}),
+		PrivateKeyPassphrase: passphrase,
+	})
+	if err != nil {
+		t.Fatalf("parse encrypted certificate bundle: %v", err)
+	}
+	return bundle, serial
 }
 
 func currentLiveConfigurationID(ctx context.Context, client *Client) (string, error) {
@@ -217,68 +370,20 @@ func currentLiveConfigurationID(ctx context.Context, client *Client) (string, er
 	return "", errors.New("currently active configuration not found")
 }
 
-func findLiveVirtualHost(resources []ResourceAny, name, fqdn string) string {
-	for _, resource := range resources {
-		if equalLiveString(resource.Attributes["name"], name) || containsLiveString(resource.Attributes, fqdn) {
-			return resource.ID
-		}
-	}
-	return ""
-}
-
-func containsLiveString(value any, wanted string) bool {
-	switch typed := value.(type) {
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), strings.TrimSpace(wanted))
-	case []any:
-		for _, item := range typed {
-			if containsLiveString(item, wanted) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, item := range typed {
-			if containsLiveString(item, wanted) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func equalLiveString(value any, wanted string) bool {
 	text, ok := value.(string)
 	return ok && strings.EqualFold(strings.TrimSpace(text), strings.TrimSpace(wanted))
 }
 
-func summarizeLiveVirtualHosts(resources []ResourceAny) string {
-	items := make([]string, 0, len(resources))
-	for _, resource := range resources {
-		name, _ := resource.Attributes["name"].(string)
-		items = append(items, fmt.Sprintf("%s:%s", resource.ID, name))
-	}
-	return strings.Join(items, ", ")
-}
-
-func assertLiveMaterial(t *testing.T, ctx context.Context, client *Client, certificateID string, expected CertificateMaterial) {
+func assertLiveBundle(t *testing.T, ctx context.Context, client *Client, virtualHostName string, expected CertificateBundle) {
 	t.Helper()
-	transaction, err := client.StartConfigurationTransaction(ctx)
+	actual, err := client.GetCertificateWithOptions(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), ReadOptions{
+		PrivateKeyPassphrase: expected.Key.passphrase,
+	})
 	if err != nil {
-		t.Fatalf("start verification transaction: %v", err)
+		t.Fatalf("read synchronized certificate by virtual-host name: %v", err)
 	}
-	resource, err := client.GetSSLCertificate(ctx, certificateID)
-	abortErr := transaction.Abort()
-	if err != nil {
-		t.Fatalf("read synchronized certificate: %v", err)
-	}
-	if abortErr != nil {
-		t.Fatalf("finish verification transaction: %v", abortErr)
-	}
-	actual, err := materialFromResource(resource)
-	if err != nil {
-		t.Fatalf("decode synchronized certificate: %v", err)
-	}
-	if !certificateMaterialEqual(actual, normalizeCertificateMaterial(expected)) {
+	if actual.Checksum != expected.Checksum || actual.Certificate.Checksum != expected.Certificate.Checksum || actual.Key.Checksum != expected.Key.Checksum {
 		t.Fatal("Gateway certificate or private-key material differs from the supplied pair")
 	}
 }
@@ -312,7 +417,7 @@ func waitForLiveCertificate(ctx context.Context, address, fqdn string, serial *b
 	return fmt.Errorf("certificate serial was not served by %s for %s within one minute: %w", address, fqdn, lastErr)
 }
 
-func restoreLiveConfiguration(t *testing.T, client *Client, configurationID, certificateID string) {
+func restoreLiveConfiguration(t *testing.T, client *Client, configurationID string, certificateID CertificateID, baselineCertificate *ManagedCertificate, virtualHostName string) {
 	t.Helper()
 	t.Logf("restoring baseline configuration %s", configurationID)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -351,12 +456,28 @@ func restoreLiveConfiguration(t *testing.T, client *Client, configurationID, cer
 		t.Errorf("restore: activate baseline configuration: %v", err)
 		return
 	}
-	if _, err := client.GetSSLCertificate(ctx, certificateID); err == nil {
-		t.Errorf("restore: test certificate %s still exists in baseline configuration", certificateID)
-		return
-	} else if !IsNotFound(err) {
-		t.Errorf("restore: verify test certificate removal: %v", err)
-		return
+	if baselineCertificate == nil {
+		if _, err := client.GetSSLCertificate(ctx, certificateID.String()); err == nil {
+			t.Errorf("restore: test certificate %s still exists in baseline configuration", certificateID)
+			return
+		} else if !IsNotFound(err) {
+			t.Errorf("restore: verify test certificate removal: %v", err)
+			return
+		}
+	} else {
+		// The current REST session loaded the restored configuration, so inspect
+		// it directly rather than creating a nested high-level session.
+		var document Document[Resource[sslCertificateAttributes]]
+		path := "/configuration/ssl-certificates/" + baselineCertificate.ID.String()
+		if err := client.DoJSON(ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
+			t.Errorf("restore: read baseline certificate for virtual host %q: %v", virtualHostName, err)
+			return
+		}
+		restored, parseErr := managedCertificateFromResource(document.Data, nil)
+		if parseErr != nil || restored.Checksum != baselineCertificate.Checksum {
+			t.Errorf("restore: baseline certificate checksum differs: parse=%v", parseErr)
+			return
+		}
 	}
 	t.Log("baseline configuration restored")
 }

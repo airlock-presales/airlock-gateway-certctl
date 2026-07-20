@@ -2,6 +2,7 @@ package airlock
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 )
@@ -120,16 +121,32 @@ func (c *Client) DisconnectSSLCertificateFromNodes(ctx context.Context, certID s
 
 // AddVirtualHostCertificateRelationship adds SSL certificate connections on the virtual-host relationship endpoint.
 func (c *Client) AddVirtualHostCertificateRelationship(ctx context.Context, virtualHostID string, certIDs ...string) error {
-	body := NewRelationshipDocument(identifiers(SSLCertificateType, certIDs))
+	certificate, err := singleIdentifier(SSLCertificateType, certIDs)
+	if err != nil {
+		return err
+	}
+	body := Document[ResourceIdentifier]{Data: certificate}
 	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificate"
 	return c.DoJSON(ctx, http.MethodPatch, path, body, nil, http.StatusNoContent)
 }
 
 // RemoveVirtualHostCertificateRelationship removes SSL certificate connections on the virtual-host relationship endpoint.
 func (c *Client) RemoveVirtualHostCertificateRelationship(ctx context.Context, virtualHostID string, certIDs ...string) error {
-	body := NewRelationshipDocument(identifiers(SSLCertificateType, certIDs))
+	certificate, err := singleIdentifier(SSLCertificateType, certIDs)
+	if err != nil {
+		return err
+	}
+	body := Document[ResourceIdentifier]{Data: certificate}
 	path := "/configuration/virtual-hosts/" + url.PathEscape(virtualHostID) + "/relationships/ssl-certificate"
 	return c.DoJSON(ctx, http.MethodDelete, path, body, nil, http.StatusNoContent)
+}
+
+func singleIdentifier(resourceType string, ids []string) (ResourceIdentifier, error) {
+	items := identifiers(resourceType, ids)
+	if len(items) != 1 {
+		return ResourceIdentifier{}, errors.New("exactly one certificate ID is required for a virtual-host SSL certificate relationship")
+	}
+	return items[0], nil
 }
 
 func identifiers(resourceType string, ids []string) []ResourceIdentifier {

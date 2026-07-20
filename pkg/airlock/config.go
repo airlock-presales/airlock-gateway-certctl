@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // CreateSession creates an authenticated Gateway REST session using the configured API key.
@@ -30,7 +31,13 @@ func (c *Client) CreateSessionAndLoadActiveConfiguration(ctx context.Context) er
 		return err
 	}
 	if err := c.LoadActiveConfiguration(ctx); err != nil {
-		_ = c.TerminateSession(ctx)
+		terminationContext := ctx
+		cancel := func() {}
+		if ctx.Err() != nil {
+			terminationContext, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		}
+		_ = c.TerminateSession(terminationContext)
+		cancel()
 		return err
 	}
 	return nil
@@ -90,7 +97,6 @@ type ValidationMessage struct {
 	ID       string
 	Severity string
 	Detail   string
-	Raw      ResourceAny
 }
 
 // Validate returns Gateway validator messages with severity ERROR.
@@ -103,7 +109,7 @@ func (c *Client) Validate(ctx context.Context) ([]ValidationMessage, error) {
 
 	messages := make([]ValidationMessage, 0, len(doc.Data))
 	for _, item := range doc.Data {
-		msg := ValidationMessage{ID: item.ID, Raw: item}
+		msg := ValidationMessage{ID: item.ID}
 		if item.Meta != nil {
 			msg.Severity, _ = item.Meta["severity"].(string)
 		}
@@ -115,17 +121,78 @@ func (c *Client) Validate(ctx context.Context) ([]ValidationMessage, error) {
 	return messages, nil
 }
 
-// ActivateConfiguration validates and activates the currently loaded configuration.
+// ConflictPolicy controls how Airlock Gateway handles a configuration that
+// became outdated after this session loaded it.
+type ConflictPolicy string
+
+const (
+	// RejectConcurrentChanges is the safe default. Activation fails whenever
+	// another API or Configuration Center session activated a change meanwhile.
+	RejectConcurrentChanges ConflictPolicy = "reject"
+	// MergeNonConflictingChanges asks Airlock Gateway to merge changes and to
+	// fail activation when the Gateway detects an unresolvable conflict.
+	MergeNonConflictingChanges ConflictPolicy = "merge"
+	// OverwriteConcurrentChanges ignores an outdated working copy and can
+	// overwrite changes made by another actor. Use it only deliberately.
+	OverwriteConcurrentChanges ConflictPolicy = "overwrite"
+)
+
+// ActivationOptions defines appliance-side concurrency and failover behavior.
+type ActivationOptions struct {
+	ConflictPolicy            ConflictPolicy
+	DisableFailoverActivation bool
+}
+
+type activationRequest struct {
+	Comment string                   `json:"comment"`
+	Options activationRequestOptions `json:"options"`
+}
+
+type activationRequestOptions struct {
+	IgnoreOutdatedConfiguration bool `json:"ignoreOutdatedConfiguration"`
+	AutoMerge                   bool `json:"autoMerge"`
+	FailoverActivation          bool `json:"failoverActivation"`
+}
+
+// DefaultActivationOptions returns the conservative production defaults.
+func DefaultActivationOptions() ActivationOptions {
+	return ActivationOptions{ConflictPolicy: RejectConcurrentChanges}
+}
+
+// ActivateConfiguration validates and activates the currently loaded
+// configuration using conservative concurrency handling.
 func (c *Client) ActivateConfiguration(ctx context.Context, comment string) error {
-	body := map[string]any{
-		"comment": comment,
-		"options": map[string]any{
-			"ignoreOutdatedConfiguration": false,
-			"autoMerge":                   true,
-			"failoverActivation":          true,
-		},
+	return c.ActivateConfigurationWithOptions(ctx, comment, DefaultActivationOptions())
+}
+
+// ActivateConfigurationWithOptions activates the currently loaded
+// configuration with explicit appliance-side concurrency behavior.
+func (c *Client) ActivateConfigurationWithOptions(ctx context.Context, comment string, options ActivationOptions) error {
+	requestOptions, err := options.requestOptions()
+	if err != nil {
+		return err
 	}
+	body := activationRequest{Comment: comment, Options: requestOptions}
 	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent)
+}
+
+func (o ActivationOptions) requestOptions() (activationRequestOptions, error) {
+	policy := o.ConflictPolicy
+	if policy == "" {
+		policy = RejectConcurrentChanges
+	}
+	request := activationRequestOptions{FailoverActivation: !o.DisableFailoverActivation}
+	switch policy {
+	case RejectConcurrentChanges:
+		// Both flags false makes any outdated configuration fail.
+	case MergeNonConflictingChanges:
+		request.AutoMerge = true
+	case OverwriteConcurrentChanges:
+		request.IgnoreOutdatedConfiguration = true
+	default:
+		return activationRequestOptions{}, fmt.Errorf("unsupported conflict policy %q", policy)
+	}
+	return request, nil
 }
 
 // DownloadOpenAPISpec downloads the live OpenAPI spec exposed by the Gateway Configuration Center.

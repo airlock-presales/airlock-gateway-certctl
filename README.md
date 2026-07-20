@@ -1,13 +1,119 @@
-# airlock-certctl
+# airlock-gateway-certctl
 
-A small Go client library and CLI for Airlock Gateway SSL certificate management.
+A typed Go library and administrative CLI for Airlock Gateway SSL certificate
+lifecycle management. The production API validates certificates, private keys,
+certificate types, targets, and activation policies locally. A certificate and
+its private key are checksum-compared and written together in one appliance
+configuration transaction.
 
-The implementation deliberately keeps certificate attributes as `map[string]any`. Airlock Gateway versions expose the authoritative OpenAPI schema at the Configuration Center endpoint:
+The typed certificate API targets Airlock Gateway 8.6. The lower-level JSON:API
+methods remain available as an advanced escape hatch for resources outside the
+typed certificate lifecycle API. The Gateway exposes its authoritative OpenAPI
+schema at the Configuration Center endpoint:
 
 - JSON: `https://<configuration-center-url>/airlock/rest/v3/api-docs`
 - YAML: `https://<configuration-center-url>/airlock/rest/v3/api-docs.yaml`
 
 Use the `schema` command to download the live schema from your Gateway and verify the exact `ssl-certificate` attributes for your version.
+
+## Typed certificate synchronization
+
+The normal integration needs no Airlock resource IDs. Address the desired
+certificate through the stable logical name of its Virtual Host:
+
+```go
+certificatePEM, err := os.ReadFile("fullchain-leaf.pem")
+if err != nil {
+    log.Fatal(err)
+}
+privateKeyPEM, err := os.ReadFile("private-key.pem")
+if err != nil {
+    log.Fatal(err)
+}
+
+bundle, err := airlock.ParseCertificateBundle(airlock.CertificateBundleInput{
+    Type:           airlock.ServerCertificate,
+    CertificatePEM: certificatePEM,
+    PrivateKeyPEM:  privateKeyPEM,
+    // CertificateChainPEM: [][]byte{intermediatePEM},
+    // RootCAPEM: rootCAPEM,
+    // PrivateKeyPassphrase: []byte(os.Getenv("KEY_PASSPHRASE")),
+})
+if err != nil {
+    // Malformed PEM, unsupported types, bad passphrases, and certificate/key
+    // mismatches fail here, before a Gateway session is opened.
+    log.Fatal(err)
+}
+
+client, err := airlock.New(airlock.Config{
+    Address: "gateway.example.com",
+    APIKey:  os.Getenv("AIRLOCK_API_KEY"),
+    // TrustedCertificate: "/etc/pki/airlock-management-ca.pem",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+result, err := client.SyncCertificate(
+    context.Background(),
+    airlock.ForVirtualHost("www"),
+    bundle,
+    airlock.SyncOptions{ActivationComment: "Rotate www certificate"},
+)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("changed=%t id=%s certificate=%s key=%s bundle=%s\n",
+    result.Changed,
+    result.Certificate.ID,
+    result.Certificate.Certificate.Checksum,
+    result.Certificate.Key.Checksum,
+    result.Certificate.Checksum,
+)
+```
+
+`SyncCertificate` performs the complete lifecycle:
+
+1. validates every PEM object and verifies that the private key matches the
+   leaf certificate;
+2. opens an independent authenticated Airlock REST session and loads the active
+   configuration;
+3. resolves the exact Virtual Host name and its current certificate binding;
+4. compares canonical SHA-256 checksums (DER, not formatting-sensitive PEM
+   text);
+5. creates and binds a missing certificate, or replaces the complete pair when
+   it differs;
+6. validates the working configuration and activates it; and
+7. terminates the session on success and error paths.
+
+Certificate, private key, chain, root CA, and relationship changes are staged
+in one Airlock working configuration and become visible together at activation.
+The zero-value `SyncOptions` rejects activation whenever another API or GUI
+session activated a configuration after this transaction loaded its working
+copy. `MergeNonConflictingChanges` can be selected explicitly;
+`OverwriteConcurrentChanges` is intentionally explicit because it can discard
+someone else's changes.
+
+Because Airlock marks a private-key passphrase as `writeOnly`, reading or
+partially updating an already encrypted key requires the caller to supply it
+again through `ReadOptions.PrivateKeyPassphrase` or
+`SyncOptions.ExistingKeyPassphrase`. A full `SyncCertificate` automatically
+uses the passphrase held by its validated bundle and never persists it.
+
+Each transaction owns a separate cookie jar and therefore a separate
+server-side Airlock working copy. A single `Client` can be used concurrently;
+there is no process-local mutex pretending to provide appliance transactions.
+
+## Compatibility and release status
+
+The typed contract is implemented against and live-tested with Airlock Gateway
+8.6.0. The integration test also downloads the target appliance's OpenAPI
+document and verifies the required resource paths and `certType` enum.
+
+These typed changes are currently recorded under `Unreleased` in
+`CHANGELOG.md`. Consumers that require an immutable Go module version should
+use the next semantic-version tag after it has been created; the older tags do
+not contain this certificate lifecycle API.
 
 ## Build
 
@@ -292,13 +398,16 @@ Use `--show-secrets` only for a controlled export workflow, for example when red
 
 ## Attribute input
 
-`--attrs` expects the `attributes` object, not the full JSON:API envelope. Example shape only; verify actual names against your Gateway schema:
+`--attrs` is a low-level CLI input and expects the `attributes` object, not the
+full JSON:API envelope. This is the Airlock Gateway 8.6 shape:
 
 ```json
 {
-  "name": "www.example.com",
+  "certType": "SERVER_CERT",
   "certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
-  "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+  "certificateChain": [],
+  "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "rootCaCertificate": ""
 }
 ```
 
@@ -313,74 +422,48 @@ The library wraps this object as:
 }
 ```
 
-## Library usage
+## Typed API surface
+
+The certificate lifecycle API consists of concrete domain types rather than
+attribute maps:
+
+- connection and authentication: `Config`, `New`;
+- validated local material: `Certificate`, `Key`, `CertificateBundle`,
+  `ParseCertificate`, `ParseKey`, `ParseEncryptedKey`,
+  `ParseCertificateBundle`;
+- typed selectors: `ForVirtualHost`, `ByCertificateID`;
+- typed appliance state: `ManagedCertificate`, `VirtualHost`, `SyncResult`;
+- lifecycle methods: `GetCertificate`, atomic-pair `SyncCertificate`,
+  `SyncLeafCertificate`, `SyncKey`, `StartConfigurationTransaction`, the same
+  operations on a transaction, `Commit`, `CommitWithOptions`, and `Abort`;
+- explicit concurrency policy: `RejectConcurrentChanges` (default),
+  `MergeNonConflictingChanges`, `OverwriteConcurrentChanges`.
+
+`Certificate.Checksum`, `Key.Checksum`, and `ManagedCertificate.Checksum` are
+available for audit logs and drift detection. Private-key PEM and passphrases
+are not JSON-serializable fields of these types.
+
+`SyncLeafCertificate` and `SyncKey` cover callers that receive only one side of
+an existing pair. They first read the other side from the selected Airlock
+resource, verify the resulting pair locally, and still write the complete pair
+atomically. Consequently, a key-only call with a genuinely different key is
+rejected until the matching certificate is supplied through `SyncCertificate`;
+the library never creates a known mismatched device state.
+
+Use `ByCertificateID` only when managing an Airlock certificate that is not
+owned through a Virtual Host:
 
 ```go
-ctx := context.Background()
-client, err := airlock.NewClient("gateway.example.com", os.Getenv("AIRLOCK_API_KEY"), airlock.WithInsecureSkipVerify())
-if err != nil {
-    log.Fatal(err)
-}
-if err := client.CreateSessionAndLoadActiveConfiguration(ctx); err != nil {
-    log.Fatal(err)
-}
-defer client.TerminateSession(ctx)
-
-cert, err := client.CreateSSLCertificate(ctx, map[string]any{"name": "www.example.com"})
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(cert.ID)
+state, err := client.GetCertificate(ctx, airlock.ByCertificateID(17))
 ```
 
-### Transactional certificate synchronization
+### Advanced raw JSON:API access
 
-`Config` contains the Airlock Gateway address, API key, TLS trust, and timeout
-settings. `SyncSSLCertificate` performs the complete Configuration REST API
-sequence documented for [Airlock Gateway 8.6](https://docs.airlock.com/gateway/8.6/index/rest-api/config-rest-api.html)
-and synchronizes the full desired `ssl-certificate` state:
-
-```go
-client, err := airlock.New(airlock.Config{
-    Address: "gateway.example.com",
-    APIKey:  os.Getenv("AIRLOCK_API_KEY"),
-    // InsecureSkipVerify: true, // lab systems only
-})
-if err != nil {
-    log.Fatal(err)
-}
-
-result, err := client.SyncSSLCertificate(
-    context.Background(),
-    "42", // existing Airlock ssl-certificate ID; use "" to create a new resource
-    airlock.CertificateMaterial{
-        CertType:         "SERVER_CERT",
-        Certificate:      string(certificatePEM),
-        CertificateChain: []string{string(intermediatePEM)},
-        PrivateKey:       string(privateKeyPEM),
-    },
-    "Rotate certificate for www.example.com",
-)
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Printf("changed=%t certificate=%s key=%s\n",
-    result.Changed,
-    result.Checksums.Certificate,
-    result.Checksums.PrivateKey,
-)
-```
-
-The synchronization compares SHA-256 checksums of the exact supplied
-certificate and private-key bytes. If all material is already identical, no
-configuration write or activation is performed. Otherwise the certificate,
-chain, private key, and optional root CA are sent together in one JSON:API
-create/update request. The loaded configuration is then validated and
-activated before the REST session is terminated.
-
-Airlock Gateway 8.6 does not expose a `name` attribute on `ssl-certificate`
-resources. Keep the resource ID returned by a create operation and pass it to
-subsequent synchronization calls.
+The CLI and integrations that manage API resources outside the typed
+certificate lifecycle may use `DoJSON`, `DoRaw`, `ResourceAny`, and methods such
+as `CreateSSLCertificate`. These methods intentionally follow the live OpenAPI
+document and do not provide the compile-time guarantees of the primary typed
+API. Do not use them for normal certificate rotation.
 
 ## Implemented endpoints
 

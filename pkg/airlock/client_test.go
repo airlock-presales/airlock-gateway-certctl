@@ -3,9 +3,11 @@ package airlock
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,42 @@ func TestNewClientBuildsAirlockRestBasePath(t *testing.T) {
 	want := "https://gateway.example.com/airlock/rest/session/create"
 	if got != want {
 		t.Fatalf("endpoint mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestNewRequiresAPIKey(t *testing.T) {
+	if _, err := New(Config{Address: "gateway.example.com"}); err == nil {
+		t.Fatal("New accepted an empty API key")
+	}
+}
+
+func TestConfigDoesNotJSONSerializeAPIKey(t *testing.T) {
+	data, err := json.Marshal(Config{Address: "gateway.example.com", APIKey: "top-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "top-secret") {
+		t.Fatalf("configuration leaked API key: %s", data)
+	}
+}
+
+func TestStructuredConflictError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"OUTDATED_CONFIGURATION"}],"meta":{"rid":"request-1"}}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.DoJSON(context.Background(), http.MethodPost, "/conflict", nil, nil)
+	if !IsConflict(err) {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+	var apiError *Error
+	if !errors.As(err, &apiError) || len(apiError.Errors) != 1 || apiError.Errors[0].Code != "OUTDATED_CONFIGURATION" || apiError.Meta["rid"] != "request-1" {
+		t.Fatalf("structured Airlock error was not decoded: %#v", apiError)
 	}
 }
 
@@ -40,7 +78,7 @@ func TestCreateSSLCertificateRequest(t *testing.T) {
 		if body.Data.Type != SSLCertificateType {
 			t.Fatalf("resource type mismatch: %q", body.Data.Type)
 		}
-		if body.Data.Attributes["name"] != "test-cert" {
+		if body.Data.Attributes["certType"] != "SERVER_CERT" {
 			t.Fatalf("attribute mismatch: %#v", body.Data.Attributes)
 		}
 
@@ -55,7 +93,9 @@ func TestCreateSSLCertificateRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
-	cert, err := client.CreateSSLCertificate(context.Background(), map[string]any{"name": "test-cert"})
+	cert, err := client.CreateSSLCertificate(context.Background(), map[string]any{
+		"certType": "SERVER_CERT", "certificate": "certificate", "privateKey": "private-key",
+	})
 	if err != nil {
 		t.Fatalf("CreateSSLCertificate returned error: %v", err)
 	}
@@ -104,11 +144,11 @@ func TestAddVirtualHostCertificateRelationshipUsesGateway86Path(t *testing.T) {
 		if r.URL.Path != "/airlock/rest/configuration/virtual-hosts/6/relationships/ssl-certificate" {
 			t.Fatalf("path mismatch: %s", r.URL.Path)
 		}
-		var body Document[[]ResourceIdentifier]
+		var body Document[ResourceIdentifier]
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		want := []ResourceIdentifier{{Type: SSLCertificateType, ID: "11"}}
+		want := ResourceIdentifier{Type: SSLCertificateType, ID: "11"}
 		if !reflect.DeepEqual(body.Data, want) {
 			t.Fatalf("relationship body mismatch\nwant: %#v\n got: %#v", want, body.Data)
 		}
