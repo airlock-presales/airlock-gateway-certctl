@@ -57,7 +57,7 @@ jobs:
         run: ./scripts/check-workflow-actions.sh
 
       - name: Set up project Go version
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -104,7 +104,7 @@ jobs:
           go build -trimpath -ldflags="-s -w" ./cmd/airlock-certctl
 
       - name: Set up Go for govulncheck
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: "1.25.x"
           check-latest: true
@@ -141,7 +141,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
