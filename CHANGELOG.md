@@ -12,6 +12,10 @@
 
 ### Changed
 
+- Split the long README into a concise project overview and focused API, CLI,
+  certificate-rotation, development, and release documentation under `docs/`.
+- Updated the production-readiness release status after publication of the
+  immutable `v0.0.5` baseline.
 - Managed library transactions and all mutating CLI commands now reject an
   unsupported Gateway version before opening a configuration session.
 - Unsupported versions can be classified with

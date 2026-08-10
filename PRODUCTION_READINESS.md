@@ -73,9 +73,9 @@ An existing tag must never be moved. Before publishing a release, verify that
 the semantic tag resolves to the intended commit, CI is green for that commit,
 and the generated archive checksums are retained with the release.
 
-At the time this document was added, `main` contained commits after `v0.0.4`.
-Those changes therefore require a new semantic version; they are not part of
-the immutable `v0.0.4` tag.
+The production hardening baseline is released as `v0.0.5`. Later changes must
+be published under a newer semantic version and must not move the immutable
+`v0.0.5` tag.
 
 ## Known boundaries
 
