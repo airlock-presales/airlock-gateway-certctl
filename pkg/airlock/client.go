@@ -19,6 +19,15 @@ import (
 
 const defaultUserAgent = "airlock-certctl/0.1"
 
+var (
+	// ErrAuthentication identifies HTTP 401 and 403 Gateway responses.
+	ErrAuthentication = errors.New("Airlock Gateway authentication failed")
+	// ErrNotFound identifies an absent Gateway resource.
+	ErrNotFound = errors.New("Airlock Gateway resource not found")
+	// ErrConflict identifies an appliance-side configuration conflict.
+	ErrConflict = errors.New("Airlock Gateway configuration conflict")
+)
+
 // Error represents a non-expected HTTP response from Airlock Gateway.
 type Error struct {
 	StatusCode int
@@ -28,24 +37,56 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	body := strings.TrimSpace(e.Body)
-	if body == "" {
-		return fmt.Sprintf("airlock REST API returned HTTP %d", e.StatusCode)
+	details := make([]string, 0, len(e.Errors))
+	for _, item := range e.Errors {
+		parts := make([]string, 0, 2)
+		if item.Code != "" {
+			parts = append(parts, item.Code)
+		}
+		if item.Title != "" {
+			parts = append(parts, item.Title)
+		}
+		if len(parts) != 0 {
+			details = append(details, strings.Join(parts, ": "))
+		}
 	}
-	return fmt.Sprintf("airlock REST API returned HTTP %d: %s", e.StatusCode, body)
+	if len(details) != 0 {
+		return fmt.Sprintf("airlock REST API returned HTTP %d (%s)", e.StatusCode, strings.Join(details, "; "))
+	}
+	// Never include the raw response body in Error(): an appliance may echo a
+	// rejected request containing a private key or passphrase. Body remains
+	// available to callers that deliberately need diagnostic details.
+	return fmt.Sprintf("airlock REST API returned HTTP %d", e.StatusCode)
+}
+
+// Is supports errors.Is with ErrAuthentication, ErrNotFound, and ErrConflict.
+func (e *Error) Is(target error) bool {
+	switch target {
+	case ErrAuthentication:
+		return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+	case ErrNotFound:
+		return e.StatusCode == http.StatusNotFound
+	case ErrConflict:
+		return e.StatusCode == http.StatusConflict
+	default:
+		return false
+	}
 }
 
 // IsNotFound reports whether err is an Airlock 404 response.
 func IsNotFound(err error) bool {
-	var apiErr *Error
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+	return errors.Is(err, ErrNotFound)
+}
+
+// IsAuthentication reports whether Airlock rejected the configured API key.
+func IsAuthentication(err error) bool {
+	return errors.Is(err, ErrAuthentication)
 }
 
 // IsConflict reports whether Airlock rejected an operation because of a
 // conflict, including activation of an outdated configuration working copy.
 func IsConflict(err error) bool {
-	var apiErr *Error
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict
+	return errors.Is(err, ErrConflict)
 }
 
 func newResponseError(statusCode int, data []byte) *Error {
@@ -69,6 +110,16 @@ type Client struct {
 	httpClient *http.Client
 	userAgent  string
 }
+
+// RawClient exposes the untyped transport escape hatch. Prefer the typed
+// methods on Client for supported Gateway operations; RawClient is intended
+// for endpoints that are not yet part of the release contract.
+type RawClient struct {
+	client *Client
+}
+
+// Raw returns an explicitly untyped view of the client.
+func (c *Client) Raw() *RawClient { return &RawClient{client: c} }
 
 // Option customizes a Client.
 type Option func(*Client) error
@@ -286,8 +337,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	return req, nil
 }
 
-// DoJSON performs a JSON request and decodes the JSON response into out when out is non-nil.
-func (c *Client) DoJSON(ctx context.Context, method, path string, in any, out any, expected ...int) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, in any, out any, expected ...int) error {
 	var body io.Reader
 	if in != nil {
 		payload, err := json.Marshal(in)
@@ -329,8 +379,7 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, in any, out an
 	return nil
 }
 
-// DoRaw performs a non-JSON request and streams the response body into out when out is non-nil.
-func (c *Client) DoRaw(ctx context.Context, method, path, contentType string, in io.Reader, out io.Writer, expected ...int) error {
+func (c *Client) doRaw(ctx context.Context, method, path, contentType string, in io.Reader, out io.Writer, expected ...int) error {
 	req, err := c.newRequest(ctx, method, path, in)
 	if err != nil {
 		return err
@@ -356,6 +405,23 @@ func (c *Client) DoRaw(ctx context.Context, method, path, contentType string, in
 	}
 	_, _ = io.Copy(io.Discard, res.Body)
 	return nil
+}
+
+// DoJSON performs an untyped JSON request. Callers must provide the exact
+// Gateway path, request shape, response shape, and accepted status codes.
+func (r *RawClient) DoJSON(ctx context.Context, method, path string, in any, out any, expected ...int) error {
+	if r == nil || r.client == nil {
+		return errors.New("raw Airlock client must not be nil")
+	}
+	return r.client.doJSON(ctx, method, path, in, out, expected...)
+}
+
+// DoRaw performs an untyped streaming request.
+func (r *RawClient) DoRaw(ctx context.Context, method, path, contentType string, in io.Reader, out io.Writer, expected ...int) error {
+	if r == nil || r.client == nil {
+		return errors.New("raw Airlock client must not be nil")
+	}
+	return r.client.doRaw(ctx, method, path, contentType, in, out, expected...)
 }
 
 func statusExpected(status int, expected ...int) bool {

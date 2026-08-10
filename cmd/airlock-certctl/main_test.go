@@ -85,7 +85,7 @@ func TestListRedactsSensitiveValuesByDefault(t *testing.T) {
 						"attributes": map[string]any{
 							"certificate": "public-certificate-pem",
 							"privateKey":  "super-secret-private-key",
-							"password":    "super-secret-password",
+							"passphrase":  "super-secret-passphrase",
 						},
 					},
 				},
@@ -105,7 +105,7 @@ func TestListRedactsSensitiveValuesByDefault(t *testing.T) {
 	}
 
 	out := stdout.String()
-	for _, secret := range []string{"super-secret-private-key", "super-secret-password"} {
+	for _, secret := range []string{"super-secret-private-key", "super-secret-passphrase"} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("sensitive value %q was not redacted from output: %s", secret, out)
 		}
@@ -265,6 +265,17 @@ func TestAttrsFromPEMSplitsFullChainAndDoesNotRequireGateway(t *testing.T) {
 	}
 }
 
+func TestTypedAttributesRejectUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "attrs.json")
+	if err := os.WriteFile(path, []byte(`{"certificate":"public","privateKye":"typo"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSSLCertificateAttributes(path); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown certificate field was not rejected: %v", err)
+	}
+}
+
 func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -274,14 +285,14 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case "/airlock/rest/configuration/configurations/load-active":
 			w.WriteHeader(http.StatusNoContent)
-		case "/airlock/rest/configuration/ssl-certificates/old":
+		case "/airlock/rest/configuration/ssl-certificates/17":
 			switch r.Method {
 			case http.MethodGet:
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"data": map[string]any{
 						"type": "ssl-certificate",
-						"id":   "old",
+						"id":   "17",
 						"relationships": map[string]any{
 							"virtual-hosts": map[string]any{
 								"data": []any{map[string]any{"type": "virtual-host", "id": "13"}},
@@ -303,18 +314,18 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"type": "ssl-certificate",
-					"id":   "new",
+					"id":   "18",
 					"attributes": map[string]any{
 						"privateKey": "new-secret",
 					},
 				},
 			})
-		case "/airlock/rest/configuration/ssl-certificates/new/relationships/virtual-hosts":
+		case "/airlock/rest/configuration/ssl-certificates/18/relationships/virtual-hosts":
 			if r.Method != http.MethodPatch {
 				t.Fatalf("new relationship expected PATCH, got %s", r.Method)
 			}
 			w.WriteHeader(http.StatusNoContent)
-		case "/airlock/rest/configuration/ssl-certificates/old/relationships/virtual-hosts":
+		case "/airlock/rest/configuration/ssl-certificates/17/relationships/virtual-hosts":
 			if r.Method != http.MethodDelete {
 				t.Fatalf("old relationship expected DELETE, got %s", r.Method)
 			}
@@ -345,7 +356,7 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := run([]string{"--host", server.URL, "--api-key", "token", "replace-with-new", "--old-cert-id", "old", "--attrs", attrsFile, "--activate", "--activate-comment", "replace test cert"}, &stdout, &stderr)
+	err := run([]string{"--host", server.URL, "--api-key", "token", "replace-with-new", "--old-cert-id", "17", "--attrs", attrsFile, "--activate", "--activate-comment", "replace test cert"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run returned error: %v\nstderr: %s", err, stderr.String())
 	}
@@ -356,11 +367,11 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 	want := []string{
 		"POST /airlock/rest/session/create",
 		"POST /airlock/rest/configuration/configurations/load-active",
-		"GET /airlock/rest/configuration/ssl-certificates/old",
+		"GET /airlock/rest/configuration/ssl-certificates/17",
 		"POST /airlock/rest/configuration/ssl-certificates",
-		"PATCH /airlock/rest/configuration/ssl-certificates/new/relationships/virtual-hosts",
-		"DELETE /airlock/rest/configuration/ssl-certificates/old/relationships/virtual-hosts",
-		"DELETE /airlock/rest/configuration/ssl-certificates/old",
+		"PATCH /airlock/rest/configuration/ssl-certificates/18/relationships/virtual-hosts",
+		"DELETE /airlock/rest/configuration/ssl-certificates/17/relationships/virtual-hosts",
+		"DELETE /airlock/rest/configuration/ssl-certificates/17",
 		"GET /airlock/rest/configuration/validator-messages",
 		"POST /airlock/rest/configuration/configurations/activate",
 		"POST /airlock/rest/session/terminate",

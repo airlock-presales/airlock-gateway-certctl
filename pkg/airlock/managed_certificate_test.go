@@ -137,7 +137,7 @@ func TestSyncCertificateForVirtualHostCreatesAndBindsAtomically(t *testing.T) {
 					ID:         "6",
 					Attributes: virtualHostAttributes{Name: "test", HostName: "test.airlock.local"},
 					Relationships: map[string]Relationship{
-						"ssl-certificate": {Data: ResourceIdentifier{Type: SSLCertificateType, ID: "-1000"}},
+						"ssl-certificate": {Data: json.RawMessage(`{"type":"ssl-certificate","id":"-1000"}`)},
 					},
 				},
 			}})
@@ -231,7 +231,7 @@ func TestSyncCertificateForVirtualHostSkipsEquivalentBundle(t *testing.T) {
 					Type:          VirtualHostType,
 					ID:            "6",
 					Attributes:    virtualHostAttributes{Name: "test", HostName: "same.airlock.local"},
-					Relationships: map[string]Relationship{"ssl-certificate": {Data: ResourceIdentifier{Type: SSLCertificateType, ID: "81"}}},
+					Relationships: map[string]Relationship{"ssl-certificate": {Data: json.RawMessage(`{"type":"ssl-certificate","id":"81"}`)}},
 				},
 			}})
 		case "/airlock/rest/configuration/ssl-certificates/81":

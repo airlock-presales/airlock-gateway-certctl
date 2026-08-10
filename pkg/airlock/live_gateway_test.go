@@ -40,7 +40,10 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 
 	fqdn := envOrDefault("AIRLOCK_TEST_FQDN", "test.airlock.local")
 	virtualHostName := envOrDefault("AIRLOCK_TEST_VIRTUAL_HOST", "test")
-	serviceAddress := envOrDefault("AIRLOCK_TEST_SERVICE_ADDRESS", net.JoinHostPort(fqdn, "443"))
+	// The management API lifecycle remains the test's default scope. Front-end
+	// TLS verification is opt-in because the configured FQDN may intentionally
+	// be resolvable only in a customer network.
+	serviceAddress := strings.TrimSpace(os.Getenv("AIRLOCK_TEST_SERVICE_ADDRESS"))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -94,6 +97,9 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 		t.Fatalf("finish baseline transaction: %v", err)
 	}
 
+	// From this point onward, always reactivate the recorded baseline—even if a
+	// mutation reports an error after the appliance already accepted it.
+	activated = true
 	created, err := client.SyncCertificate(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), first, SyncOptions{
 		ActivationComment: "airlock-certctl live test: deploy certificate pair",
 	})
@@ -107,7 +113,6 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 	if created.Certificate.Checksum != first.Checksum {
 		t.Fatalf("deployed bundle checksum does not match supplied material")
 	}
-	activated = true
 	t.Logf("certificate pair deployed through virtual host %q as resource %s", virtualHostName, certificateID)
 
 	if serviceAddress != "" {
@@ -246,36 +251,76 @@ func TestLiveGatewayOpenAPIContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := client.VerifyGatewayVersion(context.Background()); err != nil {
+		t.Fatalf("verify live Gateway version: %v", err)
+	}
 	data, err := client.DownloadOpenAPISpec(context.Background(), "json")
 	if err != nil {
 		t.Fatalf("download live OpenAPI schema: %v", err)
 	}
 	var schema struct {
-		Paths      map[string]json.RawMessage `json:"paths"`
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+		Paths      map[string]map[string]json.RawMessage `json:"paths"`
 		Components struct {
 			Schemas map[string]struct {
 				Properties map[string]struct {
+					Type string   `json:"type"`
 					Enum []string `json:"enum"`
 				} `json:"properties"`
+				AdditionalProperties bool `json:"additionalProperties"`
 			} `json:"schemas"`
 		} `json:"components"`
 	}
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatalf("decode live OpenAPI schema: %v", err)
 	}
-	for _, path := range []string{
-		"/configuration/ssl-certificates",
-		"/configuration/ssl-certificates/{id}",
-		"/configuration/ssl-certificates/{id}/relationships/virtual-hosts",
-		"/configuration/virtual-hosts",
-		"/configuration/configurations/activate",
+	if got := strings.TrimSpace(schema.Info.Version); got != TestedGatewayVersion {
+		t.Errorf("live OpenAPI version differs: want %s, got %s", TestedGatewayVersion, got)
+	}
+	for path, methods := range map[string][]string{
+		"/configuration/ssl-certificates":                                              {"get", "post"},
+		"/configuration/ssl-certificates/{id}":                                         {"get", "patch", "delete"},
+		"/configuration/ssl-certificates/{id}/relationships/virtual-hosts":             {"patch", "delete"},
+		"/configuration/ssl-certificates/{id}/relationships/back-end-groups":           {"patch", "delete"},
+		"/configuration/ssl-certificates/{id}/relationships/json-web-key-sets/remotes": {"patch", "delete"},
+		"/configuration/ssl-certificates/{id}/relationships/nodes":                     {"patch", "delete"},
+		"/configuration/virtual-hosts":                                                 {"get"},
+		"/configuration/virtual-hosts/{id}/relationships/ssl-certificate":              {"patch", "delete"},
+		"/configuration/configurations/activate":                                       {"post"},
 	} {
-		if _, exists := schema.Paths[path]; !exists {
+		operations, exists := schema.Paths[path]
+		if !exists {
 			t.Errorf("live OpenAPI schema is missing required path %s", path)
+			continue
+		}
+		for _, method := range methods {
+			if _, exists := operations[method]; !exists {
+				t.Errorf("live OpenAPI schema is missing %s %s", strings.ToUpper(method), path)
+			}
+		}
+	}
+	certificateSchema := schema.Components.Schemas["SSLCertificateDto"]
+	if certificateSchema.AdditionalProperties {
+		t.Error("SSLCertificateDto unexpectedly permits additional properties")
+	}
+	wantProperties := map[string]string{
+		"certType": "string", "certificate": "string", "certificateChain": "array",
+		"passphrase": "string", "privateKey": "string", "rootCaCertificate": "string",
+	}
+	for name, wantType := range wantProperties {
+		property, exists := certificateSchema.Properties[name]
+		if !exists {
+			t.Errorf("live SSLCertificateDto is missing property %s", name)
+			continue
+		}
+		if property.Type != wantType {
+			t.Errorf("live SSLCertificateDto.%s type differs: want %s, got %s", name, wantType, property.Type)
 		}
 	}
 	wantTypes := []string{string(ServerCertificate), string(ClientCertificate)}
-	gotTypes := schema.Components.Schemas["SSLCertificateDto"].Properties["certType"].Enum
+	gotTypes := certificateSchema.Properties["certType"].Enum
 	if strings.Join(gotTypes, ",") != strings.Join(wantTypes, ",") {
 		t.Errorf("live certType enum differs: want %v, got %v", wantTypes, gotTypes)
 	}
@@ -283,6 +328,64 @@ func TestLiveGatewayOpenAPIContract(t *testing.T) {
 		t.FailNow()
 	}
 	t.Log("live OpenAPI certificate contract matches the typed client")
+}
+
+// TestLiveGatewayTypedReadContract decodes real appliance resources through
+// the release CRUD types without printing certificate or private-key data.
+func TestLiveGatewayTypedReadContract(t *testing.T) {
+	if os.Getenv("AIRLOCK_LIVE_TEST") != "1" {
+		t.Skip("set AIRLOCK_LIVE_TEST=1 to run live Gateway tests")
+	}
+	client, err := New(Config{
+		Address:            strings.TrimSpace(os.Getenv("AIRLOCK_HOST")),
+		APIKey:             strings.TrimSpace(os.Getenv("AIRLOCK_API_KEY")),
+		Timeout:            90 * time.Second,
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	session, err := client.newSessionClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.CreateSessionAndLoadActiveConfiguration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := session.TerminateSession(context.Background()); err != nil {
+			t.Errorf("terminate read session: %v", err)
+		}
+	}()
+	resources, err := session.ListSSLCertificates(ctx, ListSSLCertificatesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range resources {
+		if resource.Type != SSLCertificateType || resource.ID == 0 {
+			t.Fatalf("invalid typed certificate identity: type=%q id=%s", resource.Type, resource.ID)
+		}
+		if err := resource.Attributes.validateIfPresent(); err != nil {
+			t.Fatalf("certificate %s has incompatible attributes: %v", resource.ID, err)
+		}
+		for relationship := range resource.Relationships {
+			if _, err := relationship.resourceType(); err != nil {
+				t.Fatalf("certificate %s has unknown relationship %q", resource.ID, relationship)
+			}
+		}
+	}
+	if len(resources) != 0 {
+		resource, err := session.GetSSLCertificate(ctx, resources[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resource.ID != resources[0].ID {
+			t.Fatalf("typed certificate GET returned ID %s, want %s", resource.ID, resources[0].ID)
+		}
+	}
+	t.Logf("decoded %d SSL certificate resources through the typed API", len(resources))
 }
 
 func livePEMPair(t *testing.T, fqdn string) ([]byte, []byte, *big.Int) {
@@ -359,7 +462,7 @@ func liveEncryptedCertificateBundle(t *testing.T, fqdn string) (CertificateBundl
 
 func currentLiveConfigurationID(ctx context.Context, client *Client) (string, error) {
 	var document Document[[]ResourceAny]
-	if err := client.DoJSON(ctx, http.MethodGet, "/configuration/configurations", nil, &document, http.StatusOK); err != nil {
+	if err := client.Raw().DoJSON(ctx, http.MethodGet, "/configuration/configurations", nil, &document, http.StatusOK); err != nil {
 		return "", err
 	}
 	for _, configuration := range document.Data {
@@ -452,12 +555,12 @@ func restoreLiveConfiguration(t *testing.T, client *Client, configurationID stri
 			"failoverActivation":          true,
 		},
 	}
-	if err := client.DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent); err != nil {
+	if err := client.Raw().DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent); err != nil {
 		t.Errorf("restore: activate baseline configuration: %v", err)
 		return
 	}
-	if baselineCertificate == nil {
-		if _, err := client.GetSSLCertificate(ctx, certificateID.String()); err == nil {
+	if baselineCertificate == nil && certificateID != 0 {
+		if _, err := client.GetSSLCertificate(ctx, certificateID); err == nil {
 			t.Errorf("restore: test certificate %s still exists in baseline configuration", certificateID)
 			return
 		} else if !IsNotFound(err) {
@@ -469,7 +572,7 @@ func restoreLiveConfiguration(t *testing.T, client *Client, configurationID stri
 		// it directly rather than creating a nested high-level session.
 		var document Document[Resource[sslCertificateAttributes]]
 		path := "/configuration/ssl-certificates/" + baselineCertificate.ID.String()
-		if err := client.DoJSON(ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
+		if err := client.Raw().DoJSON(ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
 			t.Errorf("restore: read baseline certificate for virtual host %q: %v", virtualHostName, err)
 			return
 		}

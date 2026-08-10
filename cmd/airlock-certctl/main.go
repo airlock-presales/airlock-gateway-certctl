@@ -76,7 +76,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return withSession(ctx, client, func() error {
-			certs, err := client.ListSSLCertificates(ctx, *filter)
+			certs, err := client.ListSSLCertificates(ctx, airlock.ListSSLCertificatesOptions{RawFilter: *filter})
 			if err != nil {
 				return err
 			}
@@ -93,8 +93,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *id == "" {
 			return errors.New("get requires --id")
 		}
+		certificateID, err := airlock.ParseCertificateID(*id)
+		if err != nil {
+			return err
+		}
 		return withSession(ctx, client, func() error {
-			cert, err := client.GetSSLCertificate(ctx, *id)
+			cert, err := client.GetSSLCertificate(ctx, certificateID)
 			if err != nil {
 				return err
 			}
@@ -112,7 +116,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("find-domain requires --domain")
 		}
 		return withSession(ctx, client, func() error {
-			certs, err := client.ListSSLCertificates(ctx, "")
+			certs, err := client.ListSSLCertificates(ctx, airlock.ListSSLCertificatesOptions{})
 			if err != nil {
 				return err
 			}
@@ -131,7 +135,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *attrsFile == "" {
 			return errors.New("create requires --attrs")
 		}
-		attrs, err := readJSONMap(*attrsFile)
+		attrs, err := readSSLCertificateAttributes(*attrsFile)
 		if err != nil {
 			return err
 		}
@@ -161,7 +165,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *id == "" || *attrsFile == "" {
 			return errors.New("update requires --id and --attrs")
 		}
-		attrs, err := readJSONMap(*attrsFile)
+		certificateID, err := airlock.ParseCertificateID(*id)
+		if err != nil {
+			return err
+		}
+		attrs, err := readSSLCertificateAttributes(*attrsFile)
 		if err != nil {
 			return err
 		}
@@ -169,7 +177,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
-			cert, err := client.UpdateSSLCertificate(ctx, *id, attrs)
+			cert, err := client.UpdateSSLCertificate(ctx, certificateID, attrs)
 			if err != nil {
 				return err
 			}
@@ -192,7 +200,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *oldID == "" || *attrsFile == "" {
 			return errors.New("replace-with-new requires --old-cert-id and --attrs")
 		}
-		attrs, err := readJSONMap(*attrsFile)
+		oldCertificateID, err := airlock.ParseCertificateID(*oldID)
+		if err != nil {
+			return err
+		}
+		attrs, err := readSSLCertificateAttributes(*attrsFile)
 		if err != nil {
 			return err
 		}
@@ -200,7 +212,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
-			result, err := replaceCertificateWithNew(ctx, client, *oldID, attrs, *deleteOld)
+			result, err := replaceCertificateWithNew(ctx, client, oldCertificateID, attrs, *deleteOld)
 			if err != nil {
 				return err
 			}
@@ -221,11 +233,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *id == "" {
 			return errors.New("delete requires --id")
 		}
+		certificateID, err := airlock.ParseCertificateID(*id)
+		if err != nil {
+			return err
+		}
 		return withSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
-			if err := client.DeleteSSLCertificate(ctx, *id); err != nil {
+			if err := client.DeleteSSLCertificate(ctx, certificateID); err != nil {
 				return err
 			}
 			if err := finishConfig(ctx, client, mut); err != nil {
@@ -248,15 +264,23 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *certID == "" || len(ids) == 0 {
 			return errors.New(command + " requires --cert-id and --virtual-host-ids")
 		}
+		certificateID, err := airlock.ParseCertificateID(*certID)
+		if err != nil {
+			return err
+		}
+		parsedVirtualHostIDs, err := parseVirtualHostIDs(ids)
+		if err != nil {
+			return err
+		}
 		return withSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
 			var err error
 			if command == "connect-vh" {
-				err = client.ConnectSSLCertificateToVirtualHosts(ctx, *certID, ids...)
+				err = client.ConnectSSLCertificateToVirtualHosts(ctx, certificateID, parsedVirtualHostIDs...)
 			} else {
-				err = client.DisconnectSSLCertificateFromVirtualHosts(ctx, *certID, ids...)
+				err = client.DisconnectSSLCertificateFromVirtualHosts(ctx, certificateID, parsedVirtualHostIDs...)
 			}
 			if err != nil {
 				return err
@@ -282,20 +306,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *certID == "" || len(ids) == 0 {
 			return errors.New(command + " requires --cert-id and --ids")
 		}
-		resourceType, err := resourceTypeForRelationship(*relationship)
+		certificateID, err := airlock.ParseCertificateID(*certID)
 		if err != nil {
 			return err
 		}
-		refs := makeResourceIdentifiers(resourceType, ids)
 		return withSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
-			if command == "connect" {
-				err = client.AddSSLCertificateRelationship(ctx, *certID, *relationship, refs)
-			} else {
-				err = client.RemoveSSLCertificateRelationship(ctx, *certID, *relationship, refs)
-			}
+			err = changeCertificateRelationship(ctx, client, command == "connect", certificateID, *relationship, ids)
 			if err != nil {
 				return err
 			}
@@ -490,22 +509,22 @@ func finishConfig(ctx context.Context, client *airlock.Client, mut *mutateOption
 }
 
 type domainCertificateMatch struct {
-	Type             string                          `json:"type"`
-	ID               string                          `json:"id"`
-	CertType         string                          `json:"certType,omitempty"`
-	CommonName       string                          `json:"commonName,omitempty"`
-	DNSNames         []string                        `json:"dnsNames,omitempty"`
-	IPAddresses      []string                        `json:"ipAddresses,omitempty"`
-	NotBefore        time.Time                       `json:"notBefore"`
-	NotAfter         time.Time                       `json:"notAfter"`
-	IssuerCommonName string                          `json:"issuerCommonName,omitempty"`
-	SerialNumber     string                          `json:"serialNumber,omitempty"`
-	Relationships    map[string]airlock.Relationship `json:"relationships,omitempty"`
+	Type             string                                                   `json:"type"`
+	ID               string                                                   `json:"id"`
+	CertType         airlock.CertificateType                                  `json:"certType,omitempty"`
+	CommonName       string                                                   `json:"commonName,omitempty"`
+	DNSNames         []string                                                 `json:"dnsNames,omitempty"`
+	IPAddresses      []string                                                 `json:"ipAddresses,omitempty"`
+	NotBefore        time.Time                                                `json:"notBefore"`
+	NotAfter         time.Time                                                `json:"notAfter"`
+	IssuerCommonName string                                                   `json:"issuerCommonName,omitempty"`
+	SerialNumber     string                                                   `json:"serialNumber,omitempty"`
+	Relationships    map[airlock.CertificateRelationship]airlock.Relationship `json:"relationships,omitempty"`
 }
 
 type replaceCertificateResult struct {
 	OldCertificateID   string                                  `json:"oldCertificateId"`
-	NewCertificate     airlock.ResourceAny                     `json:"newCertificate"`
+	NewCertificate     airlock.SSLCertificateResource          `json:"newCertificate"`
 	MovedRelationships map[string][]airlock.ResourceIdentifier `json:"movedRelationships,omitempty"`
 	DeletedOld         bool                                    `json:"deletedOld"`
 }
@@ -556,12 +575,13 @@ func runAttrsFromPEM(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	attrs := map[string]any{
-		"certType":          *certType,
-		"certificate":       certs[0],
-		"certificateChain":  chain,
-		"privateKey":        privateKey,
-		"rootCaCertificate": rootCA,
+	typeValue := airlock.CertificateType(*certType)
+	attrs := airlock.SSLCertificateAttributes{
+		CertType:          &typeValue,
+		Certificate:       &certs[0],
+		CertificateChain:  &chain,
+		PrivateKey:        &privateKey,
+		RootCACertificate: &rootCA,
 	}
 
 	data, err := json.MarshalIndent(attrs, "", "  ")
@@ -600,10 +620,13 @@ func readCertificatePEMBlocks(path string) ([]string, error) {
 	return certs, nil
 }
 
-func findCertificatesForDomain(certs []airlock.ResourceAny, domain string) []domainCertificateMatch {
+func findCertificatesForDomain(certs []airlock.SSLCertificateResource, domain string) []domainCertificateMatch {
 	matches := make([]domainCertificateMatch, 0)
 	for _, resource := range certs {
-		pemText, _ := resource.Attributes["certificate"].(string)
+		if resource.Attributes.Certificate == nil {
+			continue
+		}
+		pemText := *resource.Attributes.Certificate
 		cert, err := firstCertificateFromPEM(pemText)
 		if err != nil {
 			continue
@@ -613,7 +636,7 @@ func findCertificatesForDomain(certs []airlock.ResourceAny, domain string) []dom
 		}
 		match := domainCertificateMatch{
 			Type:             resource.Type,
-			ID:               resource.ID,
+			ID:               resource.ID.String(),
 			CommonName:       cert.Subject.CommonName,
 			DNSNames:         cert.DNSNames,
 			NotBefore:        cert.NotBefore,
@@ -622,8 +645,8 @@ func findCertificatesForDomain(certs []airlock.ResourceAny, domain string) []dom
 			SerialNumber:     cert.SerialNumber.String(),
 			Relationships:    resource.Relationships,
 		}
-		if certType, ok := resource.Attributes["certType"].(string); ok {
-			match.CertType = certType
+		if resource.Attributes.CertType != nil {
+			match.CertType = *resource.Attributes.CertType
 		}
 		for _, ip := range cert.IPAddresses {
 			match.IPAddresses = append(match.IPAddresses, ip.String())
@@ -692,7 +715,7 @@ func normalizeHostForMatch(value string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
 }
 
-func replaceCertificateWithNew(ctx context.Context, client *airlock.Client, oldID string, attrs map[string]any, deleteOld bool) (replaceCertificateResult, error) {
+func replaceCertificateWithNew(ctx context.Context, client *airlock.Client, oldID airlock.CertificateID, attrs airlock.SSLCertificateAttributes, deleteOld bool) (replaceCertificateResult, error) {
 	oldCert, err := client.GetSSLCertificate(ctx, oldID)
 	if err != nil {
 		return replaceCertificateResult{}, err
@@ -703,18 +726,23 @@ func replaceCertificateWithNew(ctx context.Context, client *airlock.Client, oldI
 	}
 
 	moved := make(map[string][]airlock.ResourceIdentifier)
-	for _, relationship := range []string{"virtual-hosts", "back-end-groups", "remote-jwks", "nodes"} {
+	for _, relationship := range []airlock.CertificateRelationship{
+		airlock.CertificateVirtualHosts,
+		airlock.CertificateBackEndGroups,
+		airlock.CertificateRemoteJWKS,
+		airlock.CertificateNodes,
+	} {
 		refs := resourceIdentifiersFromRelationship(oldCert.Relationships[relationship])
 		if len(refs) == 0 {
 			continue
 		}
-		if err := client.AddSSLCertificateRelationship(ctx, newCert.ID, relationship, refs); err != nil {
+		if err := client.ConnectSSLCertificateRelationship(ctx, newCert.ID, relationship, refs); err != nil {
 			return replaceCertificateResult{}, err
 		}
-		if err := client.RemoveSSLCertificateRelationship(ctx, oldID, relationship, refs); err != nil {
+		if err := client.DisconnectSSLCertificateRelationship(ctx, oldID, relationship, refs); err != nil {
 			return replaceCertificateResult{}, err
 		}
-		moved[relationship] = refs
+		moved[string(relationship)] = refs
 	}
 
 	if deleteOld {
@@ -724,7 +752,7 @@ func replaceCertificateWithNew(ctx context.Context, client *airlock.Client, oldI
 	}
 
 	return replaceCertificateResult{
-		OldCertificateID:   oldID,
+		OldCertificateID:   oldID.String(),
 		NewCertificate:     newCert,
 		MovedRelationships: moved,
 		DeletedOld:         deleteOld,
@@ -732,13 +760,10 @@ func replaceCertificateWithNew(ctx context.Context, client *airlock.Client, oldI
 }
 
 func resourceIdentifiersFromRelationship(rel airlock.Relationship) []airlock.ResourceIdentifier {
-	if rel.Data == nil {
+	if len(rel.Data) == 0 {
 		return nil
 	}
-	data, err := json.Marshal(rel.Data)
-	if err != nil {
-		return nil
-	}
+	data := rel.Data
 	var many []airlock.ResourceIdentifier
 	if err := json.Unmarshal(data, &many); err == nil {
 		return many
@@ -750,33 +775,7 @@ func resourceIdentifiersFromRelationship(rel airlock.Relationship) []airlock.Res
 	return nil
 }
 
-func resourceTypeForRelationship(relationship string) (string, error) {
-	switch relationship {
-	case "virtual-hosts":
-		return airlock.VirtualHostType, nil
-	case "back-end-groups":
-		return airlock.BackEndGroupType, nil
-	case "remote-jwks":
-		return airlock.RemoteJWKSType, nil
-	case "nodes":
-		return airlock.NodeType, nil
-	default:
-		return "", fmt.Errorf("unsupported relationship %q; use virtual-hosts, back-end-groups, remote-jwks, or nodes", relationship)
-	}
-}
-
-func makeResourceIdentifiers(resourceType string, ids []string) []airlock.ResourceIdentifier {
-	refs := make([]airlock.ResourceIdentifier, 0, len(ids))
-	for _, id := range ids {
-		if id == "" {
-			continue
-		}
-		refs = append(refs, airlock.ResourceIdentifier{Type: resourceType, ID: id})
-	}
-	return refs
-}
-
-func readJSONMap(path string) (map[string]any, error) {
+func readSSLCertificateAttributes(path string) (airlock.SSLCertificateAttributes, error) {
 	var data []byte
 	var err error
 	if path == "-" {
@@ -785,11 +784,19 @@ func readJSONMap(path string) (map[string]any, error) {
 		data, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return nil, err
+		return airlock.SSLCertificateAttributes{}, err
 	}
-	var attrs map[string]any
-	if err := json.Unmarshal(data, &attrs); err != nil {
-		return nil, fmt.Errorf("parse JSON attributes: %w", err)
+	var attrs airlock.SSLCertificateAttributes
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&attrs); err != nil {
+		return airlock.SSLCertificateAttributes{}, fmt.Errorf("parse typed SSL certificate attributes: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return airlock.SSLCertificateAttributes{}, errors.New("SSL certificate attributes must contain exactly one JSON object")
+	}
+	if err := attrs.Validate(); err != nil {
+		return airlock.SSLCertificateAttributes{}, err
 	}
 	return attrs, nil
 }
@@ -849,6 +856,73 @@ func shouldRedactOutputKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func changeCertificateRelationship(ctx context.Context, client *airlock.Client, connect bool, certificateID airlock.CertificateID, relationship string, values []string) error {
+	switch relationship {
+	case "virtual-hosts":
+		ids, err := parseVirtualHostIDs(values)
+		if err != nil {
+			return err
+		}
+		if connect {
+			return client.ConnectSSLCertificateToVirtualHosts(ctx, certificateID, ids...)
+		}
+		return client.DisconnectSSLCertificateFromVirtualHosts(ctx, certificateID, ids...)
+	case "back-end-groups":
+		ids := make([]airlock.BackEndGroupID, 0, len(values))
+		for _, value := range values {
+			id, err := airlock.ParseBackEndGroupID(value)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if connect {
+			return client.ConnectSSLCertificateToBackEndGroups(ctx, certificateID, ids...)
+		}
+		return client.DisconnectSSLCertificateFromBackEndGroups(ctx, certificateID, ids...)
+	case "remote-jwks":
+		ids := make([]airlock.RemoteJWKSID, 0, len(values))
+		for _, value := range values {
+			id, err := airlock.ParseRemoteJWKSID(value)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if connect {
+			return client.ConnectSSLCertificateToRemoteJWKS(ctx, certificateID, ids...)
+		}
+		return client.DisconnectSSLCertificateFromRemoteJWKS(ctx, certificateID, ids...)
+	case "nodes":
+		ids := make([]airlock.NodeID, 0, len(values))
+		for _, value := range values {
+			id, err := airlock.ParseNodeID(value)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if connect {
+			return client.ConnectSSLCertificateToNodes(ctx, certificateID, ids...)
+		}
+		return client.DisconnectSSLCertificateFromNodes(ctx, certificateID, ids...)
+	default:
+		return fmt.Errorf("unsupported relationship %q; use virtual-hosts, back-end-groups, remote-jwks, or nodes", relationship)
+	}
+}
+
+func parseVirtualHostIDs(values []string) ([]airlock.VirtualHostID, error) {
+	ids := make([]airlock.VirtualHostID, 0, len(values))
+	for _, value := range values {
+		id, err := airlock.ParseVirtualHostID(value)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func splitCSV(s string) []string {

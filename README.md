@@ -6,9 +6,11 @@ certificate types, targets, and activation policies locally. A certificate and
 its private key are checksum-compared and written together in one appliance
 configuration transaction.
 
-The typed certificate API targets Airlock Gateway 8.6. The lower-level JSON:API
-methods remain available as an advanced escape hatch for resources outside the
-typed certificate lifecycle API. The Gateway exposes its authoritative OpenAPI
+The typed certificate API targets Airlock Gateway 8.6. All supported
+certificate CRUD operations, resource IDs, attributes, and relationships are
+compile-time typed. Untyped JSON transport remains available only through the
+explicit `client.Raw()` escape hatch for resources outside the release
+contract. The Gateway exposes its authoritative OpenAPI
 schema at the Configuration Center endpoint:
 
 - JSON: `https://<configuration-center-url>/airlock/rest/v3/api-docs`
@@ -108,12 +110,11 @@ there is no process-local mutex pretending to provide appliance transactions.
 
 The typed contract is implemented against and live-tested with Airlock Gateway
 8.6.0. The integration test also downloads the target appliance's OpenAPI
-document and verifies the required resource paths and `certType` enum.
+document and verifies the 8.6 version, HTTP operations, relationship paths,
+certificate field types, closed-object semantics, and `certType` enum.
 
-These typed changes are currently recorded under `Unreleased` in
-`CHANGELOG.md`. Consumers that require an immutable Go module version should
-use the next semantic-version tag after it has been created; the older tags do
-not contain this certificate lifecycle API.
+These typed changes are released as `v0.0.4`. Older tags do not contain this
+certificate lifecycle API.
 
 ## Build
 
@@ -398,8 +399,11 @@ Use `--show-secrets` only for a controlled export workflow, for example when red
 
 ## Attribute input
 
-`--attrs` is a low-level CLI input and expects the `attributes` object, not the
-full JSON:API envelope. This is the Airlock Gateway 8.6 shape:
+`--attrs` expects the typed `SSLCertificateAttributes` object, not the full
+JSON:API envelope. Unknown properties and unsupported `certType` values are
+rejected locally. Pointer-backed fields preserve PATCH semantics: an omitted
+property remains unchanged while an explicitly empty property clears it. This
+is the Airlock Gateway 8.6 shape:
 
 ```json
 {
@@ -433,6 +437,11 @@ attribute maps:
   `ParseCertificateBundle`;
 - typed selectors: `ForVirtualHost`, `ByCertificateID`;
 - typed appliance state: `ManagedCertificate`, `VirtualHost`, `SyncResult`;
+- typed wire API: `SSLCertificateAttributes`, `SSLCertificateResource`,
+  `CertificateID`, `VirtualHostID`, `BackEndGroupID`, `RemoteJWKSID`, `NodeID`,
+  and `CertificateRelationship`;
+- typed CRUD: `ListSSLCertificates`, `GetSSLCertificate`,
+  `CreateSSLCertificate`, `UpdateSSLCertificate`, and `DeleteSSLCertificate`;
 - lifecycle methods: `GetCertificate`, atomic-pair `SyncCertificate`,
   `SyncLeafCertificate`, `SyncKey`, `StartConfigurationTransaction`, the same
   operations on a transaction, `Commit`, `CommitWithOptions`, and `Abort`;
@@ -459,11 +468,16 @@ state, err := client.GetCertificate(ctx, airlock.ByCertificateID(17))
 
 ### Advanced raw JSON:API access
 
-The CLI and integrations that manage API resources outside the typed
-certificate lifecycle may use `DoJSON`, `DoRaw`, `ResourceAny`, and methods such
-as `CreateSSLCertificate`. These methods intentionally follow the live OpenAPI
-document and do not provide the compile-time guarantees of the primary typed
-API. Do not use them for normal certificate rotation.
+Integrations that manage API resources outside the typed release contract may
+use `client.Raw().DoJSON`, `client.Raw().DoRaw`, and `ResourceAny`. Keeping the
+transport behind `Raw()` makes the loss of compile-time guarantees explicit.
+The CLI and all normal certificate operations use the typed API.
+
+```go
+var response airlock.Document[airlock.ResourceAny]
+err := client.Raw().DoJSON(ctx, http.MethodGet,
+    "/configuration/future-resource/1", nil, &response, http.StatusOK)
+```
 
 ## Implemented endpoints
 
@@ -485,7 +499,7 @@ The client uses the `/airlock/rest` base path and currently includes:
 - `DELETE /configuration/ssl-certificates/{id}`
 - `PATCH|DELETE /configuration/ssl-certificates/{id}/relationships/virtual-hosts`
 - `PATCH|DELETE /configuration/ssl-certificates/{id}/relationships/back-end-groups`
-- `PATCH|DELETE /configuration/ssl-certificates/{id}/relationships/remote-jwks`
+- `PATCH|DELETE /configuration/ssl-certificates/{id}/relationships/json-web-key-sets/remotes`
 - `PATCH|DELETE /configuration/ssl-certificates/{id}/relationships/nodes`
 - `GET /v3/api-docs[.yaml]`
 

@@ -1,11 +1,13 @@
 package airlock
 
+import "encoding/json"
+
 // Document is a small JSON:API envelope used by the Airlock Gateway configuration API.
 type Document[T any] struct {
-	Data     T              `json:"data,omitempty"`
-	Included []ResourceAny  `json:"included,omitempty"`
-	Errors   []APIErrorBody `json:"errors,omitempty"`
-	Meta     map[string]any `json:"meta,omitempty"`
+	Data     T                 `json:"data,omitempty"`
+	Included []json.RawMessage `json:"included,omitempty"`
+	Errors   []APIErrorBody    `json:"errors,omitempty"`
+	Meta     map[string]any    `json:"meta,omitempty"`
 }
 
 // Resource represents a JSON:API resource with typed attributes.
@@ -18,14 +20,18 @@ type Resource[A any] struct {
 	Meta          map[string]any          `json:"meta,omitempty"`
 }
 
-// ResourceAny is a JSON:API resource using untyped attributes.
+// ResourceAny is a JSON:API resource using untyped attributes. It exists for
+// callers of Client.Raw only. Normal certificate operations use
+// SSLCertificateResource and never return ResourceAny.
 type ResourceAny = Resource[map[string]any]
 
-// Relationship is intentionally generic because Airlock exposes many relationship shapes.
+// Relationship is a JSON:API relationship whose data is decoded explicitly by
+// the typed resource owning it. RawMessage avoids propagating any-typed data
+// through the normal certificate API.
 type Relationship struct {
-	Data  any            `json:"data,omitempty"`
-	Links map[string]any `json:"links,omitempty"`
-	Meta  map[string]any `json:"meta,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+	Links map[string]any  `json:"links,omitempty"`
+	Meta  map[string]any  `json:"meta,omitempty"`
 }
 
 // ResourceIdentifier is the minimal JSON:API object used in relationship endpoints.
@@ -45,10 +51,11 @@ type APIErrorBody struct {
 	Meta   map[string]any `json:"meta,omitempty"`
 }
 
-// NewResourceDocument wraps attributes in the JSON:API document/resource envelope expected by create/update calls.
-func NewResourceDocument(resourceType, id string, attrs map[string]any) Document[ResourceAny] {
-	return Document[ResourceAny]{
-		Data: ResourceAny{
+// NewResourceDocument wraps typed attributes in the JSON:API envelope expected
+// by create and update operations.
+func NewResourceDocument[A any](resourceType, id string, attrs A) Document[Resource[A]] {
+	return Document[Resource[A]]{
+		Data: Resource[A]{
 			Type:       resourceType,
 			ID:         id,
 			Attributes: attrs,

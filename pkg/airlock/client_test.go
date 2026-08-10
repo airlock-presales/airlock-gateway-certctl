@@ -49,7 +49,7 @@ func TestStructuredConflictError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = client.DoJSON(context.Background(), http.MethodPost, "/conflict", nil, nil)
+	err = client.Raw().DoJSON(context.Background(), http.MethodPost, "/conflict", nil, nil)
 	if !IsConflict(err) {
 		t.Fatalf("expected conflict error, got %v", err)
 	}
@@ -71,20 +71,20 @@ func TestCreateSSLCertificateRequest(t *testing.T) {
 			t.Fatalf("authorization header mismatch: %q", got)
 		}
 
-		var body Document[ResourceAny]
+		var body Document[Resource[SSLCertificateAttributes]]
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
 		if body.Data.Type != SSLCertificateType {
 			t.Fatalf("resource type mismatch: %q", body.Data.Type)
 		}
-		if body.Data.Attributes["certType"] != "SERVER_CERT" {
+		if body.Data.Attributes.CertType == nil || *body.Data.Attributes.CertType != ServerCertificate {
 			t.Fatalf("attribute mismatch: %#v", body.Data.Attributes)
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(Document[ResourceAny]{
-			Data: ResourceAny{Type: SSLCertificateType, ID: "42", Attributes: body.Data.Attributes},
+		_ = json.NewEncoder(w).Encode(Document[SSLCertificateResource]{
+			Data: SSLCertificateResource{Type: SSLCertificateType, ID: 42, Attributes: body.Data.Attributes},
 		})
 	}))
 	defer server.Close()
@@ -93,13 +93,16 @@ func TestCreateSSLCertificateRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
-	cert, err := client.CreateSSLCertificate(context.Background(), map[string]any{
-		"certType": "SERVER_CERT", "certificate": "certificate", "privateKey": "private-key",
+	certificate := "certificate"
+	privateKey := "private-key"
+	certificateType := ServerCertificate
+	cert, err := client.CreateSSLCertificate(context.Background(), SSLCertificateAttributes{
+		CertType: &certificateType, Certificate: &certificate, PrivateKey: &privateKey,
 	})
 	if err != nil {
 		t.Fatalf("CreateSSLCertificate returned error: %v", err)
 	}
-	if cert.ID != "42" {
+	if cert.ID != 42 {
 		t.Fatalf("created certificate ID mismatch: %q", cert.ID)
 	}
 }
@@ -160,7 +163,7 @@ func TestAddVirtualHostCertificateRelationshipUsesGateway86Path(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
-	if err := client.AddVirtualHostCertificateRelationship(context.Background(), "6", "11"); err != nil {
+	if err := client.AddVirtualHostCertificateRelationship(context.Background(), 6, 11); err != nil {
 		t.Fatalf("AddVirtualHostCertificateRelationship returned error: %v", err)
 	}
 }
@@ -174,5 +177,133 @@ func TestEndpointPreservesQueryString(t *testing.T) {
 	want := "https://gateway.example.com/airlock/rest/configuration/validator-messages?filter=meta.severity%3D%3DERROR"
 	if got != want {
 		t.Fatalf("endpoint mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestTypedCertificatePatchDistinguishesAbsentFromEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Data struct {
+				Attributes map[string]json.RawMessage `json:"attributes"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := body.Data.Attributes["certificate"]; exists {
+			t.Fatal("nil certificate field was serialized in PATCH")
+		}
+		value, exists := body.Data.Attributes["rootCaCertificate"]
+		if !exists || string(value) != `""` {
+			t.Fatalf("explicit empty root CA was not serialized: %s", value)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := ""
+	if _, err := client.UpdateSSLCertificate(context.Background(), 42, SSLCertificateAttributes{RootCACertificate: &empty}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoteJWKSRelationshipUsesGateway86Path(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := "/airlock/rest/configuration/ssl-certificates/42/relationships/json-web-key-sets/remotes"
+		if r.URL.Path != want {
+			t.Fatalf("relationship path mismatch: want %s, got %s", want, r.URL.Path)
+		}
+		var body Document[[]ResourceIdentifier]
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		wantIdentifier := ResourceIdentifier{Type: RemoteJWKSType, ID: "7"}
+		if !reflect.DeepEqual(body.Data, []ResourceIdentifier{wantIdentifier}) {
+			t.Fatalf("relationship body mismatch: %#v", body.Data)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ConnectSSLCertificateToRemoteJWKS(context.Background(), 42, 7); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTypedRelationshipRejectsEveryInvalidTarget(t *testing.T) {
+	client, err := NewClient("gateway.example.com", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ConnectSSLCertificateToRemoteJWKS(context.Background(), 42, 7, 0); err == nil {
+		t.Fatal("mixed valid and invalid typed relationship IDs were accepted")
+	}
+	if err := client.ConnectSSLCertificateRelationship(context.Background(), 42, CertificateNodes, []ResourceIdentifier{{Type: NodeType, ID: "not-numeric"}}); err == nil {
+		t.Fatal("invalid generic relationship ID was accepted")
+	}
+}
+
+func TestTypedCertificateResponseRejectsInvalidIdentity(t *testing.T) {
+	for name, response := range map[string]string{
+		"wrong type":           `{"data":{"type":"virtual-host","id":"42"}}`,
+		"invalid id":           `{"data":{"type":"ssl-certificate","id":"not-numeric"}}`,
+		"unknown attribute":    `{"data":{"type":"ssl-certificate","id":"42","attributes":{"futureField":true}}}`,
+		"unknown relationship": `{"data":{"type":"ssl-certificate","id":"42","relationships":{"future-resources":{"data":[]}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(response))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, "token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.GetSSLCertificate(context.Background(), 42); err == nil {
+				t.Fatal("invalid typed response was accepted")
+			}
+		})
+	}
+}
+
+func TestErrorStringDoesNotExposeRawResponseBody(t *testing.T) {
+	err := newResponseError(http.StatusBadRequest, []byte(`{"privateKey":"top-secret"}`))
+	if strings.Contains(err.Error(), "top-secret") {
+		t.Fatalf("Error leaked raw response body: %s", err)
+	}
+}
+
+func TestVerifyGatewayVersion(t *testing.T) {
+	for version, wantError := range map[string]bool{"8.6.0": false, "8.6.4": false, "8.5.2": true, "9.0.0": true} {
+		t.Run(version, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]any{"type": "node-status", "attributes": map[string]any{"version": version}},
+				})
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, "token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.VerifyGatewayVersion(context.Background())
+			if (err != nil) != wantError {
+				t.Fatalf("VerifyGatewayVersion(%s) error = %v, wantError %t", version, err, wantError)
+			}
+			if wantError {
+				var versionError *GatewayVersionError
+				if !errors.As(err, &versionError) {
+					t.Fatalf("expected GatewayVersionError, got %T", err)
+				}
+			}
+		})
 	}
 }

@@ -6,17 +6,33 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
+// TestedGatewayVersion is the appliance release against which the typed
+// certificate contract is implemented and live-tested.
+const TestedGatewayVersion = "8.6.0"
+
+// GatewayVersionError reports a Gateway release outside the supported 8.6
+// minor line.
+type GatewayVersionError struct {
+	GatewayVersion string
+	TestedVersion  string
+}
+
+func (e *GatewayVersionError) Error() string {
+	return fmt.Sprintf("Airlock Gateway %s is incompatible with certificate API tested for %s", e.GatewayVersion, e.TestedVersion)
+}
+
 // CreateSession creates an authenticated Gateway REST session using the configured API key.
 func (c *Client) CreateSession(ctx context.Context) error {
-	return c.DoJSON(ctx, http.MethodPost, "/session/create", nil, nil, http.StatusOK)
+	return c.doJSON(ctx, http.MethodPost, "/session/create", nil, nil, http.StatusOK)
 }
 
 // TerminateSession terminates the current Gateway REST session.
 func (c *Client) TerminateSession(ctx context.Context) error {
-	return c.DoJSON(ctx, http.MethodPost, "/session/terminate", nil, nil, http.StatusOK)
+	return c.doJSON(ctx, http.MethodPost, "/session/terminate", nil, nil, http.StatusOK)
 }
 
 // CreateSessionAndLoadActiveConfiguration creates an authenticated Gateway REST session
@@ -45,48 +61,57 @@ func (c *Client) CreateSessionAndLoadActiveConfiguration(ctx context.Context) er
 
 // Version returns the Gateway version from /system/status/node when available.
 func (c *Client) Version(ctx context.Context) (string, error) {
-	var doc Document[ResourceAny]
-	if err := c.DoJSON(ctx, http.MethodGet, "/system/status/node", nil, &doc, http.StatusOK); err != nil {
+	type nodeStatusAttributes struct {
+		Version string `json:"version"`
+	}
+	var doc Document[Resource[nodeStatusAttributes]]
+	if err := c.doJSON(ctx, http.MethodGet, "/system/status/node", nil, &doc, http.StatusOK); err != nil {
 		return "", err
 	}
-	if doc.Data.Attributes == nil {
-		return "", nil
+	return doc.Data.Attributes.Version, nil
+}
+
+// VerifyGatewayVersion rejects appliances outside the tested 8.6 release
+// line. Call this during application startup when version pinning is desired.
+func (c *Client) VerifyGatewayVersion(ctx context.Context) error {
+	version, err := c.Version(ctx)
+	if err != nil {
+		return err
 	}
-	version, _ := doc.Data.Attributes["version"].(string)
-	return version, nil
+	if !strings.HasPrefix(strings.TrimSpace(version), "8.6.") && strings.TrimSpace(version) != "8.6" {
+		return &GatewayVersionError{GatewayVersion: version, TestedVersion: TestedGatewayVersion}
+	}
+	return nil
 }
 
 // LoadConfiguration loads a saved configuration by ID. hostName may be empty for the Gateway default.
 func (c *Client) LoadConfiguration(ctx context.Context, configID, hostName string) error {
-	body := map[string]any{}
-	if hostName != "" {
-		body["hostname"] = hostName
-	}
-	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/"+url.PathEscape(configID)+"/load", body, nil, http.StatusNoContent)
+	body := struct {
+		HostName string `json:"hostname,omitempty"`
+	}{HostName: hostName}
+	return c.doJSON(ctx, http.MethodPost, "/configuration/configurations/"+url.PathEscape(configID)+"/load", body, nil, http.StatusNoContent)
 }
 
 // LoadEmptyConfiguration loads an empty configuration. hostName may be empty for the Gateway default.
 func (c *Client) LoadEmptyConfiguration(ctx context.Context, hostName string) error {
-	body := map[string]any{}
-	if hostName != "" {
-		body["hostname"] = hostName
-	}
-	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/load-empty-config", body, nil, http.StatusNoContent)
+	body := struct {
+		HostName string `json:"hostname,omitempty"`
+	}{HostName: hostName}
+	return c.doJSON(ctx, http.MethodPost, "/configuration/configurations/load-empty-config", body, nil, http.StatusNoContent)
 }
 
 // LoadActiveConfiguration loads the currently active configuration for editing.
 func (c *Client) LoadActiveConfiguration(ctx context.Context) error {
-	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/load-active", nil, nil, http.StatusNoContent)
+	return c.doJSON(ctx, http.MethodPost, "/configuration/configurations/load-active", nil, nil, http.StatusNoContent)
 }
 
 // SaveConfiguration saves the currently loaded configuration and returns the saved configuration ID.
 func (c *Client) SaveConfiguration(ctx context.Context, comment string) (string, error) {
-	var body any
-	if comment != "" {
-		body = map[string]any{"comment": comment}
-	}
-	var doc Document[ResourceAny]
-	if err := c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/save", body, &doc, http.StatusOK); err != nil {
+	body := struct {
+		Comment string `json:"comment,omitempty"`
+	}{Comment: comment}
+	var doc Document[Resource[struct{}]]
+	if err := c.doJSON(ctx, http.MethodPost, "/configuration/configurations/save", body, &doc, http.StatusOK); err != nil {
 		return "", err
 	}
 	return doc.Data.ID, nil
@@ -101,21 +126,25 @@ type ValidationMessage struct {
 
 // Validate returns Gateway validator messages with severity ERROR.
 func (c *Client) Validate(ctx context.Context) ([]ValidationMessage, error) {
-	var doc Document[[]ResourceAny]
+	type validatorMessageAttributes struct {
+		Detail string `json:"detail"`
+	}
+	type validatorMessageResource struct {
+		ID         string                     `json:"id"`
+		Attributes validatorMessageAttributes `json:"attributes"`
+		Meta       struct {
+			Severity string `json:"severity"`
+		} `json:"meta"`
+	}
+	var doc Document[[]validatorMessageResource]
 	path := "/configuration/validator-messages?filter=" + url.QueryEscape("meta.severity==ERROR")
-	if err := c.DoJSON(ctx, http.MethodGet, path, nil, &doc, http.StatusOK); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &doc, http.StatusOK); err != nil {
 		return nil, err
 	}
 
 	messages := make([]ValidationMessage, 0, len(doc.Data))
 	for _, item := range doc.Data {
-		msg := ValidationMessage{ID: item.ID}
-		if item.Meta != nil {
-			msg.Severity, _ = item.Meta["severity"].(string)
-		}
-		if item.Attributes != nil {
-			msg.Detail, _ = item.Attributes["detail"].(string)
-		}
+		msg := ValidationMessage{ID: item.ID, Severity: item.Meta.Severity, Detail: item.Attributes.Detail}
 		messages = append(messages, msg)
 	}
 	return messages, nil
@@ -173,7 +202,7 @@ func (c *Client) ActivateConfigurationWithOptions(ctx context.Context, comment s
 		return err
 	}
 	body := activationRequest{Comment: comment, Options: requestOptions}
-	return c.DoJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent)
+	return c.doJSON(ctx, http.MethodPost, "/configuration/configurations/activate", body, nil, http.StatusOK, http.StatusNoContent)
 }
 
 func (o ActivationOptions) requestOptions() (activationRequestOptions, error) {
@@ -209,7 +238,7 @@ func (c *Client) DownloadOpenAPISpec(ctx context.Context, format string) ([]byte
 	}
 
 	var buf bytes.Buffer
-	if err := c.DoRaw(ctx, http.MethodGet, path, "", nil, &buf, http.StatusOK); err != nil {
+	if err := c.doRaw(ctx, http.MethodGet, path, "", nil, &buf, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

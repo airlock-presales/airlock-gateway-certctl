@@ -317,7 +317,7 @@ func (t *ConfigurationTransaction) syncCertificateLocked(target CertificateTarge
 		if managedErr != nil && !encryptedPrivateKeyPEM(current.Attributes.PrivateKey) {
 			return SyncResult{}, managedErr
 		}
-		currentID, err := parseCertificateID(current.ID)
+		currentID, err := ParseCertificateID(current.ID)
 		if err != nil {
 			return SyncResult{}, err
 		}
@@ -371,12 +371,12 @@ func (t *ConfigurationTransaction) syncCertificateLocked(target CertificateTarge
 	}
 
 	if needsBinding {
-		if err := t.client.ConnectSSLCertificateToVirtualHosts(t.ctx, current.ID, virtualHost.ID.String()); err != nil {
-			return SyncResult{}, fmt.Errorf("bind certificate to virtual host %q: %w", virtualHost.Name, err)
-		}
-		certificateID, err := parseCertificateID(current.ID)
+		certificateID, err := ParseCertificateID(current.ID)
 		if err != nil {
 			return SyncResult{}, err
+		}
+		if err := t.client.ConnectSSLCertificateToVirtualHosts(t.ctx, certificateID, virtualHost.ID); err != nil {
+			return SyncResult{}, fmt.Errorf("bind certificate to virtual host %q: %w", virtualHost.Name, err)
 		}
 		virtualHost.CertificateID = &certificateID
 		result.Bound = true
@@ -466,7 +466,7 @@ func (t *ConfigurationTransaction) resolveCertificate(target CertificateTarget) 
 func (t *ConfigurationTransaction) getVirtualHostByName(name VirtualHostName) (VirtualHost, error) {
 	var document Document[[]Resource[virtualHostAttributes]]
 	path := "/configuration/virtual-hosts?filter=" + url.QueryEscape("name=="+string(name))
-	if err := t.client.DoJSON(t.ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
+	if err := t.client.doJSON(t.ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
 		return VirtualHost{}, err
 	}
 	matches := make([]VirtualHost, 0, 1)
@@ -490,7 +490,7 @@ func (t *ConfigurationTransaction) getVirtualHostByName(name VirtualHostName) (V
 }
 
 func virtualHostFromResource(resource Resource[virtualHostAttributes]) (VirtualHost, error) {
-	id, err := parseVirtualHostID(resource.ID)
+	id, err := ParseVirtualHostID(resource.ID)
 	if err != nil {
 		return VirtualHost{}, err
 	}
@@ -508,19 +508,16 @@ func virtualHostFromResource(resource Resource[virtualHostAttributes]) (VirtualH
 }
 
 func relationshipCertificateID(relationship Relationship) (*CertificateID, error) {
-	if relationship.Data == nil {
+	if len(relationship.Data) == 0 {
 		return nil, nil
 	}
-	data, err := json.Marshal(relationship.Data)
-	if err != nil {
-		return nil, err
-	}
+	data := relationship.Data
 	if string(data) == "null" || string(data) == "[]" {
 		return nil, nil
 	}
 	var one ResourceIdentifier
 	if err := json.Unmarshal(data, &one); err == nil && one.ID != "" {
-		id, err := parseCertificateID(one.ID)
+		id, err := ParseCertificateID(one.ID)
 		return &id, err
 	}
 	var many []ResourceIdentifier
@@ -533,14 +530,14 @@ func relationshipCertificateID(relationship Relationship) (*CertificateID, error
 	if len(many) > 1 {
 		return nil, fmt.Errorf("virtual host has %d SSL certificates", len(many))
 	}
-	id, err := parseCertificateID(many[0].ID)
+	id, err := ParseCertificateID(many[0].ID)
 	return &id, err
 }
 
 func (t *ConfigurationTransaction) getCertificate(id CertificateID) (Resource[sslCertificateAttributes], error) {
 	var document Document[Resource[sslCertificateAttributes]]
 	path := "/configuration/ssl-certificates/" + url.PathEscape(id.String())
-	if err := t.client.DoJSON(t.ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
+	if err := t.client.doJSON(t.ctx, http.MethodGet, path, nil, &document, http.StatusOK); err != nil {
 		return Resource[sslCertificateAttributes]{}, err
 	}
 	return document.Data, nil
@@ -549,10 +546,10 @@ func (t *ConfigurationTransaction) getCertificate(id CertificateID) (Resource[ss
 func (t *ConfigurationTransaction) createCertificate(attributes sslCertificateAttributes) (Resource[sslCertificateAttributes], error) {
 	body := Document[Resource[sslCertificateAttributes]]{Data: Resource[sslCertificateAttributes]{Type: SSLCertificateType, Attributes: attributes}}
 	var document Document[Resource[sslCertificateAttributes]]
-	if err := t.client.DoJSON(t.ctx, http.MethodPost, "/configuration/ssl-certificates", body, &document, http.StatusOK, http.StatusCreated); err != nil {
+	if err := t.client.doJSON(t.ctx, http.MethodPost, "/configuration/ssl-certificates", body, &document, http.StatusOK, http.StatusCreated); err != nil {
 		return Resource[sslCertificateAttributes]{}, err
 	}
-	if _, err := parseCertificateID(document.Data.ID); err != nil {
+	if _, err := ParseCertificateID(document.Data.ID); err != nil {
 		return Resource[sslCertificateAttributes]{}, fmt.Errorf("invalid certificate ID returned by Airlock Gateway: %w", err)
 	}
 	return document.Data, nil
@@ -562,7 +559,7 @@ func (t *ConfigurationTransaction) updateCertificate(id string, attributes sslCe
 	body := Document[Resource[sslCertificateAttributes]]{Data: Resource[sslCertificateAttributes]{Type: SSLCertificateType, ID: id, Attributes: attributes}}
 	var document Document[Resource[sslCertificateAttributes]]
 	path := "/configuration/ssl-certificates/" + url.PathEscape(id)
-	if err := t.client.DoJSON(t.ctx, http.MethodPatch, path, body, &document, http.StatusOK, http.StatusNoContent); err != nil {
+	if err := t.client.doJSON(t.ctx, http.MethodPatch, path, body, &document, http.StatusOK, http.StatusNoContent); err != nil {
 		return Resource[sslCertificateAttributes]{}, err
 	}
 	return document.Data, nil
@@ -588,7 +585,7 @@ func attributesFromBundle(bundle CertificateBundle) sslCertificateAttributes {
 }
 
 func managedCertificateFromResource(resource Resource[sslCertificateAttributes], passphrase []byte) (ManagedCertificate, error) {
-	id, err := parseCertificateID(resource.ID)
+	id, err := ParseCertificateID(resource.ID)
 	if err != nil {
 		return ManagedCertificate{}, err
 	}
@@ -625,7 +622,9 @@ func encryptedPrivateKeyPEM(value string) bool {
 	return block != nil && (block.Type == "ENCRYPTED PRIVATE KEY" || block.Headers["Proc-Type"] != "" || block.Headers["DEK-Info"] != "")
 }
 
-func parseCertificateID(value string) (CertificateID, error) {
+// ParseCertificateID parses the string representation used by JSON:API.
+// Negative IDs are accepted because Airlock uses them for built-in entities.
+func ParseCertificateID(value string) (CertificateID, error) {
 	id, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || id == 0 {
 		return 0, fmt.Errorf("invalid Airlock certificate ID %q", value)
@@ -633,9 +632,10 @@ func parseCertificateID(value string) (CertificateID, error) {
 	return CertificateID(id), nil
 }
 
-func parseVirtualHostID(value string) (VirtualHostID, error) {
+// ParseVirtualHostID parses a positive Airlock virtual-host ID.
+func ParseVirtualHostID(value string) (VirtualHostID, error) {
 	id, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || id == 0 {
+	if err != nil || id <= 0 {
 		return 0, fmt.Errorf("invalid Airlock virtual-host ID %q", value)
 	}
 	return VirtualHostID(id), nil
