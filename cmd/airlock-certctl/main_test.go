@@ -19,6 +19,43 @@ import (
 	"time"
 )
 
+func TestBuildInfoDoesNotRequireGatewayCredentials(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"build-info"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout.String()) != "dev" {
+		t.Fatalf("unexpected build info: %q", stdout.String())
+	}
+}
+
+func TestMutatingCommandRejectsUnsupportedGatewayBeforeSession(t *testing.T) {
+	var sessionOpened bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"attributes": map[string]any{"version": "9.0.0"}},
+			})
+		case "/airlock/rest/session/create":
+			sessionOpened = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"--host", server.URL, "--api-key", "token", "save"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "supported 8.x") {
+		t.Fatalf("expected unsupported version error, got %v", err)
+	}
+	if sessionOpened {
+		t.Fatal("unsupported Gateway opened a configuration session")
+	}
+}
+
 func TestListLoadsActiveConfigurationBeforeListingCertificates(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +318,10 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"attributes": map[string]any{"version": "8.6.0"}},
+			})
 		case "/airlock/rest/session/create":
 			w.WriteHeader(http.StatusOK)
 		case "/airlock/rest/configuration/configurations/load-active":
@@ -365,6 +406,7 @@ func TestReplaceWithNewMovesRelationshipsDeletesOldAndActivates(t *testing.T) {
 		t.Fatalf("replace output leaked private key: %s", stdout.String())
 	}
 	want := []string{
+		"GET /airlock/rest/system/status/node",
 		"POST /airlock/rest/session/create",
 		"POST /airlock/rest/configuration/configurations/load-active",
 		"GET /airlock/rest/configuration/ssl-certificates/17",

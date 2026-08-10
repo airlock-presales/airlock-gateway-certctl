@@ -59,6 +59,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "attrs-from-pem":
 		return runAttrsFromPEM(rest, stdout, stderr)
+	case "build-info":
+		_, _ = fmt.Fprintln(stdout, airlock.BuildVersion())
+		return nil
 	}
 
 	ctx := context.Background()
@@ -139,7 +142,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -173,7 +176,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -208,7 +211,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -237,7 +240,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -272,7 +275,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -310,7 +313,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			if err := prepareConfig(ctx, client, mut); err != nil {
 				return err
 			}
@@ -341,7 +344,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			id, err := client.SaveConfiguration(ctx, *comment)
 			if err != nil {
 				return err
@@ -357,7 +360,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		return withSession(ctx, client, func() error {
+		return withCompatibleSession(ctx, client, func() error {
 			messages, err := client.Validate(ctx)
 			if err != nil {
 				return err
@@ -402,6 +405,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 			_, _ = fmt.Fprintln(stdout, version)
 			return nil
 		})
+
+	case "verify-version":
+		if err := client.VerifyGatewayVersion(ctx); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(stdout, "compatible (tested with %s)\n", airlock.TestedGatewayVersion)
+		return nil
 
 	case "help", "-h", "--help":
 		usage(stdout)
@@ -471,6 +481,13 @@ func withSession(ctx context.Context, client *airlock.Client, fn func() error) e
 	}
 	defer func() { _ = client.TerminateSession(ctx) }()
 	return fn()
+}
+
+func withCompatibleSession(ctx context.Context, client *airlock.Client, fn func() error) error {
+	if err := client.VerifyGatewayVersion(ctx); err != nil {
+		return fmt.Errorf("verify Airlock Gateway compatibility: %w", err)
+	}
+	return withSession(ctx, client, fn)
 }
 
 func addMutateFlags(fs *flag.FlagSet) *mutateOptions {
@@ -974,6 +991,7 @@ Global flags must be placed before the command:
   --timeout DURATION                 HTTP timeout, default 30s
 
 Commands:
+  build-info
   attrs-from-pem --cert leaf-or-fullchain.pem --key privkey.pem [--chain chain.pem] [--root-ca ca.pem] --out attrs.json
   list [--filter EXPR]
   get --id CERT_ID
@@ -991,6 +1009,7 @@ Commands:
   activate [--comment COMMENT]
   schema [--format json|yaml] [--out file]
   version
+  verify-version
 
 Examples:
   export AIRLOCK_HOST=gateway.example.com

@@ -12,6 +12,8 @@ builds:
     binary: airlock-certctl
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/airlock-presales/airlock-gateway-certctl/pkg/airlock.buildVersion={{ .Version }}
     goos:
       - linux
       - darwin
@@ -37,6 +39,7 @@ archives:
       {{- .Arch }}
     files:
       - README.md
+      - PRODUCTION_READINESS.md
       - LICENSE*
 
 checksum:

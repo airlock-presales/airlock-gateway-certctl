@@ -14,16 +14,23 @@ import (
 // certificate contract is implemented and live-tested.
 const TestedGatewayVersion = "8.6.0"
 
-// GatewayVersionError reports a Gateway release outside the supported 8.6
-// minor line.
+// SupportedGatewayMajorVersion is the Airlock Gateway major release whose API
+// compatibility contract is supported by the typed certificate client.
+const SupportedGatewayMajorVersion = "8"
+
+// GatewayVersionError reports a Gateway release outside the supported 8.x
+// major line.
 type GatewayVersionError struct {
 	GatewayVersion string
 	TestedVersion  string
 }
 
 func (e *GatewayVersionError) Error() string {
-	return fmt.Sprintf("Airlock Gateway %s is incompatible with certificate API tested for %s", e.GatewayVersion, e.TestedVersion)
+	return fmt.Sprintf("Airlock Gateway %s is outside the supported %s.x certificate API line (tested with %s)", e.GatewayVersion, SupportedGatewayMajorVersion, e.TestedVersion)
 }
+
+// Unwrap supports errors.Is(err, ErrUnsupportedGatewayVersion).
+func (e *GatewayVersionError) Unwrap() error { return ErrUnsupportedGatewayVersion }
 
 // CreateSession creates an authenticated Gateway REST session using the configured API key.
 func (c *Client) CreateSession(ctx context.Context) error {
@@ -71,14 +78,16 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return doc.Data.Attributes.Version, nil
 }
 
-// VerifyGatewayVersion rejects appliances outside the tested 8.6 release
-// line. Call this during application startup when version pinning is desired.
+// VerifyGatewayVersion rejects appliances outside the supported 8.x release
+// line. Managed mutation APIs invoke this check automatically before opening
+// a configuration transaction.
 func (c *Client) VerifyGatewayVersion(ctx context.Context) error {
 	version, err := c.Version(ctx)
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(strings.TrimSpace(version), "8.6.") && strings.TrimSpace(version) != "8.6" {
+	major, _, _ := strings.Cut(strings.TrimSpace(version), ".")
+	if major != SupportedGatewayMajorVersion {
 		return &GatewayVersionError{GatewayVersion: version, TestedVersion: TestedGatewayVersion}
 	}
 	return nil

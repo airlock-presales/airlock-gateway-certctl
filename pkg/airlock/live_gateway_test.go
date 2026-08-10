@@ -276,8 +276,8 @@ func TestLiveGatewayOpenAPIContract(t *testing.T) {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatalf("decode live OpenAPI schema: %v", err)
 	}
-	if got := strings.TrimSpace(schema.Info.Version); got != TestedGatewayVersion {
-		t.Errorf("live OpenAPI version differs: want %s, got %s", TestedGatewayVersion, got)
+	if got := strings.TrimSpace(schema.Info.Version); !strings.HasPrefix(got, SupportedGatewayMajorVersion+".") && got != SupportedGatewayMajorVersion {
+		t.Errorf("live OpenAPI version is outside supported %s.x line: got %s", SupportedGatewayMajorVersion, got)
 	}
 	for path, methods := range map[string][]string{
 		"/configuration/ssl-certificates":                                              {"get", "post"},

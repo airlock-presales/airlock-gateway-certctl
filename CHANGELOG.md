@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- A production-readiness contract with explicit supported scope, release
+  gates, operational acceptance criteria, and known boundaries.
+- A credential-free `build-info` CLI command and semantic build-version
+  injection for release binaries.
+- A `verify-version` CLI command for explicit compatibility preflight.
+
+### Changed
+
+- Managed library transactions and all mutating CLI commands now reject an
+  unsupported Gateway version before opening a configuration session.
+- Unsupported versions can be classified with
+  `errors.Is(err, airlock.ErrUnsupportedGatewayVersion)`.
+- The default User-Agent now contains the embedded release version instead of
+  a hard-coded development version.
+- Error strings no longer include server-provided error titles, which may echo
+  submitted secret values; typed diagnostic fields remain available explicitly.
+
+### Fixed
+
+- Release documentation no longer claims that post-tag `main` changes are
+  contained in the immutable `v0.0.4` tag.
+
 ## v0.0.4 - 2026-08-10
 
 ### Added

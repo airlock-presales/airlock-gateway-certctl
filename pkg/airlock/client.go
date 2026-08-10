@@ -17,7 +17,16 @@ import (
 	"time"
 )
 
-const defaultUserAgent = "airlock-certctl/0.1"
+const developmentVersion = "dev"
+
+// buildVersion is replaced by the release build through -ldflags.
+var buildVersion = developmentVersion
+
+// BuildVersion returns the semantic version embedded in a release build, or
+// "dev" for an unversioned local build.
+func BuildVersion() string { return buildVersion }
+
+func defaultUserAgent() string { return "airlock-certctl/" + BuildVersion() }
 
 var (
 	// ErrAuthentication identifies HTTP 401 and 403 Gateway responses.
@@ -26,6 +35,9 @@ var (
 	ErrNotFound = errors.New("Airlock Gateway resource not found")
 	// ErrConflict identifies an appliance-side configuration conflict.
 	ErrConflict = errors.New("Airlock Gateway configuration conflict")
+	// ErrUnsupportedGatewayVersion identifies a Gateway outside the supported
+	// release line for typed certificate mutations.
+	ErrUnsupportedGatewayVersion = errors.New("unsupported Airlock Gateway version")
 )
 
 // Error represents a non-expected HTTP response from Airlock Gateway.
@@ -39,23 +51,17 @@ type Error struct {
 func (e *Error) Error() string {
 	details := make([]string, 0, len(e.Errors))
 	for _, item := range e.Errors {
-		parts := make([]string, 0, 2)
 		if item.Code != "" {
-			parts = append(parts, item.Code)
-		}
-		if item.Title != "" {
-			parts = append(parts, item.Title)
-		}
-		if len(parts) != 0 {
-			details = append(details, strings.Join(parts, ": "))
+			details = append(details, item.Code)
 		}
 	}
 	if len(details) != 0 {
 		return fmt.Sprintf("airlock REST API returned HTTP %d (%s)", e.StatusCode, strings.Join(details, "; "))
 	}
-	// Never include the raw response body in Error(): an appliance may echo a
-	// rejected request containing a private key or passphrase. Body remains
-	// available to callers that deliberately need diagnostic details.
+	// Never include the raw response body or server-provided title in Error():
+	// an appliance may echo a rejected request containing a private key or
+	// passphrase. Structured fields remain available to callers that
+	// deliberately need diagnostic details.
 	return fmt.Sprintf("airlock REST API returned HTTP %d", e.StatusCode)
 }
 
@@ -247,7 +253,7 @@ func NewClient(host, apiKey string, opts ...Option) (*Client, error) {
 			Jar:       jar,
 			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
-		userAgent: defaultUserAgent,
+		userAgent: defaultUserAgent(),
 	}
 
 	for _, opt := range opts {

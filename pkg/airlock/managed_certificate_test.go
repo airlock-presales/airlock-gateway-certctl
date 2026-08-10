@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -122,6 +123,8 @@ func TestSyncCertificateForVirtualHostCreatesAndBindsAtomically(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			writeTestGatewayVersion(w)
 		case "/airlock/rest/session/create":
 			http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "typed-test", Path: "/"})
 			w.WriteHeader(http.StatusOK)
@@ -200,6 +203,7 @@ func TestSyncCertificateForVirtualHostCreatesAndBindsAtomically(t *testing.T) {
 		t.Fatalf("unsafe activation request: %#v", activation)
 	}
 	wantCalls := []string{
+		"GET /airlock/rest/system/status/node",
 		"POST /airlock/rest/session/create",
 		"POST /airlock/rest/configuration/configurations/load-active",
 		"GET /airlock/rest/configuration/virtual-hosts",
@@ -221,6 +225,8 @@ func TestSyncCertificateForVirtualHostSkipsEquivalentBundle(t *testing.T) {
 	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			writeTestGatewayVersion(w)
 		case "/airlock/rest/session/create":
 			w.WriteHeader(http.StatusOK)
 		case "/airlock/rest/configuration/configurations/load-active":
@@ -269,6 +275,8 @@ func TestSyncLeafCertificateRetainsAndWritesMatchingKey(t *testing.T) {
 	var patched sslCertificateAttributes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			writeTestGatewayVersion(w)
 		case "/airlock/rest/session/create":
 			w.WriteHeader(http.StatusOK)
 		case "/airlock/rest/configuration/configurations/load-active":
@@ -322,6 +330,8 @@ func TestSyncKeyRejectsMismatchWithoutWriting(t *testing.T) {
 	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/airlock/rest/system/status/node":
+			writeTestGatewayVersion(w)
 		case "/airlock/rest/session/create":
 			w.WriteHeader(http.StatusOK)
 		case "/airlock/rest/configuration/configurations/load-active":
@@ -358,6 +368,10 @@ func TestConfigurationTransactionsUseIndependentSessions(t *testing.T) {
 	var mu sync.Mutex
 	seen := make(map[string][]string)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/airlock/rest/system/status/node" {
+			writeTestGatewayVersion(w)
+			return
+		}
 		if r.URL.Path == "/airlock/rest/session/create" {
 			id := "session-" + string(rune('0'+next.Add(1)))
 			http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: id, Path: "/"})
@@ -418,6 +432,37 @@ func TestConfigurationTransactionsUseIndependentSessions(t *testing.T) {
 			t.Fatalf("session %s saw unexpected paths: %#v", sessionID, paths)
 		}
 	}
+}
+
+func TestConfigurationTransactionRejectsUnsupportedGatewayBeforeSession(t *testing.T) {
+	var sessions atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/airlock/rest/session/create" {
+			sessions.Add(1)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"attributes": map[string]any{"version": "9.0.0"}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartConfigurationTransaction(context.Background())
+	if !errors.Is(err, ErrUnsupportedGatewayVersion) {
+		t.Fatalf("expected ErrUnsupportedGatewayVersion, got %v", err)
+	}
+	if sessions.Load() != 0 {
+		t.Fatalf("unsupported Gateway opened %d sessions", sessions.Load())
+	}
+}
+
+func writeTestGatewayVersion(w http.ResponseWriter) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data": map[string]any{"attributes": map[string]any{"version": TestedGatewayVersion}},
+	})
 }
 
 func TestActivationConflictPolicies(t *testing.T) {

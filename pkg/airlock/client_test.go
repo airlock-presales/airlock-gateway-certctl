@@ -23,6 +23,20 @@ func TestNewClientBuildsAirlockRestBasePath(t *testing.T) {
 	}
 }
 
+func TestDefaultUserAgentContainsBuildVersion(t *testing.T) {
+	client, err := NewClient("gateway.example.com", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := client.newRequest(context.Background(), http.MethodGet, "/system/status/node", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := request.UserAgent(), "airlock-certctl/"+BuildVersion(); got != want {
+		t.Fatalf("User-Agent mismatch: want %q, got %q", want, got)
+	}
+}
+
 func TestNewRequiresAPIKey(t *testing.T) {
 	if _, err := New(Config{Address: "gateway.example.com"}); err == nil {
 		t.Fatal("New accepted an empty API key")
@@ -275,14 +289,20 @@ func TestTypedCertificateResponseRejectsInvalidIdentity(t *testing.T) {
 }
 
 func TestErrorStringDoesNotExposeRawResponseBody(t *testing.T) {
-	err := newResponseError(http.StatusBadRequest, []byte(`{"privateKey":"top-secret"}`))
+	err := newResponseError(http.StatusBadRequest, []byte(`{"errors":[{"code":"INVALID_VALUE","title":"top-secret"}],"privateKey":"top-secret"}`))
 	if strings.Contains(err.Error(), "top-secret") {
-		t.Fatalf("Error leaked raw response body: %s", err)
+		t.Fatalf("Error leaked server-provided secret data: %s", err)
+	}
+	if !strings.Contains(err.Error(), "INVALID_VALUE") {
+		t.Fatalf("Error omitted safe diagnostic code: %s", err)
 	}
 }
 
 func TestVerifyGatewayVersion(t *testing.T) {
-	for version, wantError := range map[string]bool{"8.6.0": false, "8.6.4": false, "8.5.2": true, "9.0.0": true} {
+	for version, wantError := range map[string]bool{
+		"8": false, "8.0.0": false, "8.6.0": false, "8.99.4": false,
+		"7.6.4": true, "9.0.0": true, "invalid": true,
+	} {
 		t.Run(version, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -299,6 +319,9 @@ func TestVerifyGatewayVersion(t *testing.T) {
 				t.Fatalf("VerifyGatewayVersion(%s) error = %v, wantError %t", version, err, wantError)
 			}
 			if wantError {
+				if !errors.Is(err, ErrUnsupportedGatewayVersion) {
+					t.Fatalf("expected ErrUnsupportedGatewayVersion, got %v", err)
+				}
 				var versionError *GatewayVersionError
 				if !errors.As(err, &versionError) {
 					t.Fatalf("expected GatewayVersionError, got %T", err)

@@ -6,7 +6,7 @@ certificate types, targets, and activation policies locally. A certificate and
 its private key are checksum-compared and written together in one appliance
 configuration transaction.
 
-The typed certificate API targets Airlock Gateway 8.6. All supported
+The typed certificate API targets Airlock Gateway 8.x. All supported
 certificate CRUD operations, resource IDs, attributes, and relationships are
 compile-time typed. Untyped JSON transport remains available only through the
 explicit `client.Raw()` escape hatch for resources outside the release
@@ -78,15 +78,16 @@ fmt.Printf("changed=%t id=%s certificate=%s key=%s bundle=%s\n",
 
 1. validates every PEM object and verifies that the private key matches the
    leaf certificate;
-2. opens an independent authenticated Airlock REST session and loads the active
+2. verifies that the target is in the supported Airlock Gateway 8.x line;
+3. opens an independent authenticated Airlock REST session and loads the active
    configuration;
-3. resolves the exact Virtual Host name and its current certificate binding;
-4. compares canonical SHA-256 checksums (DER, not formatting-sensitive PEM
+4. resolves the exact Virtual Host name and its current certificate binding;
+5. compares canonical SHA-256 checksums (DER, not formatting-sensitive PEM
    text);
-5. creates and binds a missing certificate, or replaces the complete pair when
+6. creates and binds a missing certificate, or replaces the complete pair when
    it differs;
-6. validates the working configuration and activates it; and
-7. terminates the session on success and error paths.
+7. validates the working configuration and activates it; and
+8. terminates the session on success and error paths.
 
 Certificate, private key, chain, root CA, and relationship changes are staged
 in one Airlock working configuration and become visible together at activation.
@@ -108,19 +109,27 @@ there is no process-local mutex pretending to provide appliance transactions.
 
 ## Compatibility and release status
 
-The typed contract is implemented against and live-tested with Airlock Gateway
-8.6.0. The integration test also downloads the target appliance's OpenAPI
-document and verifies the 8.6 version, HTTP operations, relationship paths,
-certificate field types, closed-object semantics, and `certType` enum.
+The typed contract supports Airlock Gateway 8.x and is implemented against and
+live-tested with Airlock Gateway 8.6.0. Airlock's compatibility contract keeps
+the API stable throughout major version 8; a future major version requires a
+new qualification. The integration test also downloads the target appliance's
+OpenAPI document and verifies the supported major version, HTTP operations,
+relationship paths, certificate field types, closed-object semantics, and
+`certType` enum.
 
-These typed changes are released as `v0.0.4`. Older tags do not contain this
-certificate lifecycle API.
+The current `main` branch contains hardening changes after the immutable
+`v0.0.4` tag and must be published under a new semantic version. See
+[`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) for the exact delivery
+scope, mandatory release gates, and operational acceptance criteria.
 
 ## Build
 
 ```bash
 go build ./cmd/airlock-certctl
 ```
+
+Release archives embed the semantic version. `airlock-certctl build-info`
+prints that version; an unversioned local build prints `dev`.
 
 ## Test
 
@@ -175,6 +184,12 @@ Download the live OpenAPI schema:
 
 ```bash
 ./airlock-certctl --host "$AIRLOCK_HOST" --api-key "$AIRLOCK_API_KEY" schema --format yaml --out airlock-openapi.yaml
+```
+
+Verify appliance compatibility before an operational window:
+
+```bash
+./airlock-certctl --host "$AIRLOCK_HOST" --api-key "$AIRLOCK_API_KEY" verify-version
 ```
 
 Create a certificate in the currently active configuration and save it:

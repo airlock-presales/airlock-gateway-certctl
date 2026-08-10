@@ -29,6 +29,9 @@ func (c *Client) StartConfigurationTransaction(ctx context.Context) (*Configurat
 	if err != nil {
 		return nil, err
 	}
+	if err := sessionClient.VerifyGatewayVersion(ctx); err != nil {
+		return nil, fmt.Errorf("verify Airlock Gateway compatibility: %w", err)
+	}
 	if err := sessionClient.CreateSessionAndLoadActiveConfiguration(ctx); err != nil {
 		return nil, err
 	}
