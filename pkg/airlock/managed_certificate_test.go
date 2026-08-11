@@ -52,6 +52,9 @@ func TestParseCertificateBundleCanonicalChecksums(t *testing.T) {
 	if first.Certificate.Checksum == "" || first.Key.Checksum == "" || first.Checksum == "" {
 		t.Fatal("expected certificate, key, and bundle checksums")
 	}
+	if first.Certificate.Serial == "" {
+		t.Fatal("expected parsed X.509 serial number")
+	}
 }
 
 func TestTypedValuesDoNotJSONSerializeSecrets(t *testing.T) {

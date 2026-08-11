@@ -144,7 +144,7 @@ publishing.
 
 | Document | Purpose |
 | --- | --- |
-| [Go API reference](docs/API.md) | Typed API, synchronization semantics, errors, raw access, and endpoints |
+| [Go API reference](docs/API.md) | Parameters, properties, return values, ID origins, typed API, errors, raw access, and endpoints |
 | [CLI reference](docs/CLI.md) | Commands, connection settings, input format, sessions, and secret handling |
 | [Certificate rotation](docs/CERTIFICATE_ROTATION.md) | In-place, atomic replacement, manual procedures, verification, and rollback |
 | [Development and releases](docs/DEVELOPMENT.md) | Tests, live validation, automation, vulnerability scanning, and releases |

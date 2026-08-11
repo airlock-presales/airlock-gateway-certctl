@@ -12,14 +12,22 @@ import (
 
 // Config contains Airlock Gateway connection and authentication settings.
 type Config struct {
-	Address            string        `json:"address"`
-	Port               uint16        `json:"port,omitempty"`
-	APIKey             string        `json:"-"`
-	Timeout            time.Duration `json:"timeout,omitempty"`
-	InsecureSkipVerify bool          `json:"insecureSkipVerify,omitempty"`
-	TrustedCertificate string        `json:"trustedCertificate,omitempty"`
-	HTTPClient         *http.Client  `json:"-"`
-	UserAgent          string        `json:"userAgent,omitempty"`
+	// Address is the Configuration Center hostname or URL.
+	Address string `json:"address"`
+	// Port overrides the optional management port.
+	Port uint16 `json:"port,omitempty"`
+	// APIKey is the bearer API key and is excluded from JSON.
+	APIKey string `json:"-"`
+	// Timeout limits a complete HTTP request; zero uses 30 seconds.
+	Timeout time.Duration `json:"timeout,omitempty"`
+	// InsecureSkipVerify disables management TLS verification for labs.
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+	// TrustedCertificate is management CA PEM text or a PEM file path.
+	TrustedCertificate string `json:"trustedCertificate,omitempty"`
+	// HTTPClient replaces the default client and is excluded from JSON.
+	HTTPClient *http.Client `json:"-"`
+	// UserAgent overrides the versioned default User-Agent.
+	UserAgent string `json:"userAgent,omitempty"`
 }
 
 // New creates an Airlock Gateway REST client from Config.

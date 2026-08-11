@@ -4,6 +4,10 @@
 
 ### Added
 
+- Expanded the Go library reference with configuration parameters, certificate
+  properties, return values, and the origin of Gateway resource IDs.
+- Added the X.509 serial number to typed certificate metadata and documented
+  every exported certificate property.
 - A production-readiness contract with explicit supported scope, release
   gates, operational acceptance criteria, and known boundaries.
 - A credential-free `build-info` CLI command and semantic build-version

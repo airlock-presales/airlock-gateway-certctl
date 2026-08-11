@@ -31,13 +31,22 @@ func newChecksum(data []byte) Checksum {
 // Certificate is a validated X.509 certificate. Construct it with
 // ParseCertificate; its PEM bytes are immutable from the caller's perspective.
 type Certificate struct {
-	Checksum    Checksum  `json:"checksum"`
-	Subject     string    `json:"subject"`
-	Issuer      string    `json:"issuer"`
-	DNSNames    []string  `json:"dnsNames,omitempty"`
-	IPAddresses []net.IP  `json:"ipAddresses,omitempty"`
-	NotBefore   time.Time `json:"notBefore"`
-	NotAfter    time.Time `json:"notAfter"`
+	// Checksum hashes canonical X.509 DER.
+	Checksum Checksum `json:"checksum"`
+	// Subject is the X.509 subject string.
+	Subject string `json:"subject"`
+	// Issuer is the X.509 issuer string.
+	Issuer string `json:"issuer"`
+	// Serial is the uppercase hexadecimal X.509 serial number.
+	Serial string `json:"serial"`
+	// DNSNames contains DNS Subject Alternative Names.
+	DNSNames []string `json:"dnsNames,omitempty"`
+	// IPAddresses contains IP Subject Alternative Names.
+	IPAddresses []net.IP `json:"ipAddresses,omitempty"`
+	// NotBefore is the authenticated X.509 validity start.
+	NotBefore time.Time `json:"notBefore"`
+	// NotAfter is the authenticated X.509 validity end.
+	NotAfter time.Time `json:"notAfter"`
 
 	pem    []byte
 	parsed *x509.Certificate
@@ -64,6 +73,7 @@ func certificateFromParsed(parsed *x509.Certificate) Certificate {
 		Checksum:    newChecksum(parsed.Raw),
 		Subject:     parsed.Subject.String(),
 		Issuer:      parsed.Issuer.String(),
+		Serial:      strings.ToUpper(parsed.SerialNumber.Text(16)),
 		DNSNames:    append([]string(nil), parsed.DNSNames...),
 		IPAddresses: cloneIPs(parsed.IPAddresses),
 		NotBefore:   parsed.NotBefore,

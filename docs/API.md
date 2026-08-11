@@ -3,6 +3,94 @@
 The public Go API provides typed certificate lifecycle operations for Airlock
 Gateway 8.x. It is implemented and live-tested with Airlock Gateway 8.6.0.
 
+## Client construction
+
+```go
+client, err := airlock.New(airlock.Config{
+    Address: "gateway.example.com",
+    APIKey:  os.Getenv("AIRLOCK_API_KEY"),
+})
+```
+
+| Config property | Required | Meaning |
+| --- | --- | --- |
+| `Address` | yes | Configuration Center hostname or URL |
+| `Port` | no | optional management port |
+| `APIKey` | yes | bearer API key; excluded from JSON |
+| `Timeout` | no | complete HTTP timeout; default 30 seconds |
+| `TrustedCertificate` | no | management CA as PEM text or file path |
+| `InsecureSkipVerify` | no | lab-only TLS verification bypass |
+| `HTTPClient` | no | caller-provided client, useful in tests |
+| `UserAgent` | no | overrides the versioned default User-Agent |
+
+`New` returns a concurrency-safe client. Each managed configuration
+transaction receives an independent cookie jar and Gateway working copy.
+
+## Certificate input
+
+`CertificateBundleInput` properties:
+
+| Property | Meaning |
+| --- | --- |
+| `Type` | `SERVER_CERT` by default or `CLIENT_CERT` |
+| `CertificatePEM` | exactly one leaf X.509 certificate |
+| `PrivateKeyPEM` | PKCS#1, SEC1, PKCS#8, or encrypted PKCS#8 key |
+| `PrivateKeyPassphrase` | transient UTF-8 passphrase; excluded from JSON |
+| `CertificateChainPEM` | intermediate certificates in leaf-to-root order |
+| `RootCAPEM` | optional public root CA certificate |
+
+`ParseCertificateBundle` returns typed `Certificate`, `Key`, `Chain`, optional
+`RootCA`, and canonical checksums. It verifies PEM structure, the
+certificate/key match, CA constraints, and chain signatures locally.
+
+`Certificate` exposes `Checksum`, `Subject`, `Issuer`, uppercase hexadecimal
+`Serial`, `DNSNames`, `IPAddresses`, `NotBefore`, and `NotAfter`. Its `PEM()`
+method returns a defensive copy of the canonical certificate PEM.
+
+## Targets and identifier origin
+
+| Type/property | Source and meaning |
+| --- | --- |
+| `VirtualHostName` | stable operator-defined `attributes.name` returned by `/configuration/virtual-hosts` |
+| `VirtualHostID` | numeric JSON:API `data.id` assigned and returned by Gateway |
+| `CertificateID` | numeric `ssl-certificate` `data.id`; negative IDs can represent built-in resources |
+| `BackEndGroupID`, `RemoteJWKSID`, `NodeID` | numeric JSON:API IDs returned by their Gateway resources |
+| `ForVirtualHost(name)` | preferred managed selector; resolves the exact name and hides IDs |
+| `ByCertificateID(id)` | explicit selector for unbound or low-level managed resources |
+
+Relationship IDs are never invented by the library. They come from JSON:API
+resource identifiers returned by the target Gateway or from caller inventory
+obtained through the corresponding typed list operation.
+
+## High-level parameters and returns
+
+`SyncOptions`:
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `ActivationComment` | empty | Gateway configuration audit comment |
+| `ConflictPolicy` | `RejectConcurrentChanges` | reject, merge non-conflicting, or explicitly overwrite an outdated working copy |
+| `DisableFailoverActivation` | false | activate on failover nodes by default |
+| `ExistingKeyPassphrase` | empty | transient passphrase for leaf-only or key-only operations |
+
+`SyncResult`:
+
+| Property | Meaning |
+| --- | --- |
+| `Certificate` | final typed resource, certificate/key material, checksums, chain, and root CA |
+| `VirtualHost` | resolved Virtual Host and final certificate relationship when selected by name |
+| `Changed` | whether appliance state changed |
+| `Created` | whether a new `ssl-certificate` resource was created |
+| `Bound` | whether a Virtual Host relationship was created or moved |
+
+`ManagedCertificate.ID` comes directly from the Gateway response.
+`ManagedCertificate.Checksum` is calculated locally from canonical certificate,
+key, chain, root CA, and certificate-type checksums.
+
+`GetCertificateWithOptions` accepts `ReadOptions.PrivateKeyPassphrase` only for
+decoding an encrypted key returned by the Gateway; the passphrase is never
+persisted or JSON-serialized.
+
 ## Typed API surface
 
 The certificate lifecycle API consists of concrete domain types rather than

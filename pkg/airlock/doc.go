@@ -1,4 +1,4 @@
-// Package airlock provides a typed Airlock Gateway 8.6 certificate lifecycle
+// Package airlock provides a typed Airlock Gateway 8.x certificate lifecycle
 // client.
 //
 // The managed API parses and validates certificate/key bundles locally and
@@ -16,4 +16,11 @@
 // working configurations themselves. Operations outside the supported
 // certificate contract must be made through Client.Raw, making the loss of
 // compile-time schema guarantees explicit.
+//
+// ForVirtualHost accepts the stable, operator-defined attributes.name returned
+// by /configuration/virtual-hosts and hides numeric resource IDs. CertificateID,
+// VirtualHostID, BackEndGroupID, RemoteJWKSID, and NodeID are JSON:API data.id
+// values assigned and returned by Airlock Gateway; the library never invents
+// them. Parameters and result properties are documented in docs/API.md in the
+// module root.
 package airlock

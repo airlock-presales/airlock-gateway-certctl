@@ -55,29 +55,44 @@ func ByCertificateID(id CertificateID) CertificateTarget {
 // VirtualHost is the typed subset of an Airlock virtual host needed for
 // certificate management.
 type VirtualHost struct {
-	ID            VirtualHostID   `json:"id"`
-	Name          VirtualHostName `json:"name"`
-	HostName      string          `json:"hostName"`
-	AliasNames    []string        `json:"aliasNames,omitempty"`
-	CertificateID *CertificateID  `json:"certificateId,omitempty"`
+	// ID is the numeric JSON:API resource ID returned by Gateway.
+	ID VirtualHostID `json:"id"`
+	// Name is the stable operator-defined Virtual Host name.
+	Name VirtualHostName `json:"name"`
+	// HostName is the configured primary hostname.
+	HostName string `json:"hostName"`
+	// AliasNames contains configured host aliases.
+	AliasNames []string `json:"aliasNames,omitempty"`
+	// CertificateID is the current ssl-certificate relationship ID.
+	CertificateID *CertificateID `json:"certificateId,omitempty"`
 }
 
 // ManagedCertificate is a typed view of an Airlock ssl-certificate resource.
 type ManagedCertificate struct {
-	ID          CertificateID   `json:"id"`
-	Type        CertificateType `json:"type"`
-	Certificate Certificate     `json:"certificate"`
-	Key         Key             `json:"key"`
-	Chain       []Certificate   `json:"chain,omitempty"`
-	RootCA      *Certificate    `json:"rootCA,omitempty"`
-	Checksum    Checksum        `json:"checksum"`
+	// ID is the numeric ssl-certificate JSON:API ID returned by Gateway.
+	ID CertificateID `json:"id"`
+	// Type is SERVER_CERT or CLIENT_CERT.
+	Type CertificateType `json:"type"`
+	// Certificate is the parsed leaf certificate.
+	Certificate Certificate `json:"certificate"`
+	// Key is the matching parsed private key; its PEM is not JSON-serialized.
+	Key Key `json:"key"`
+	// Chain contains intermediate CA certificates.
+	Chain []Certificate `json:"chain,omitempty"`
+	// RootCA is the optional public root certificate.
+	RootCA *Certificate `json:"rootCA,omitempty"`
+	// Checksum hashes the complete canonical bundle.
+	Checksum Checksum `json:"checksum"`
 }
 
 // SyncOptions controls validation and activation of a certificate change.
 // The zero value is safe: reject concurrent changes and activate on failover.
 type SyncOptions struct {
-	ActivationComment         string
-	ConflictPolicy            ConflictPolicy
+	// ActivationComment is stored with the Gateway activation.
+	ActivationComment string
+	// ConflictPolicy defaults to RejectConcurrentChanges.
+	ConflictPolicy ConflictPolicy
+	// DisableFailoverActivation prevents activation on failover nodes.
 	DisableFailoverActivation bool
 	// ExistingKeyPassphrase is required by leaf-only/key-only operations when
 	// the currently stored Airlock key is encrypted. It is never persisted.
@@ -104,11 +119,16 @@ func (o SyncOptions) activationOptions() ActivationOptions {
 
 // SyncResult reports the typed state selected by target after synchronization.
 type SyncResult struct {
+	// Certificate is the final typed certificate resource.
 	Certificate ManagedCertificate `json:"certificate"`
-	VirtualHost *VirtualHost       `json:"virtualHost,omitempty"`
-	Changed     bool               `json:"changed"`
-	Created     bool               `json:"created"`
-	Bound       bool               `json:"bound"`
+	// VirtualHost is populated when ForVirtualHost selected the target.
+	VirtualHost *VirtualHost `json:"virtualHost,omitempty"`
+	// Changed reports whether desired state differed.
+	Changed bool `json:"changed"`
+	// Created reports creation of a new ssl-certificate resource.
+	Created bool `json:"created"`
+	// Bound reports creation or movement of a Virtual Host relationship.
+	Bound bool `json:"bound"`
 }
 
 type sslCertificateAttributes struct {
