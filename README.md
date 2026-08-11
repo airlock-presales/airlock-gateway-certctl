@@ -17,6 +17,8 @@ checksum-compared and written in one appliance configuration transaction.
   appliance resource IDs.
 - Rejects unsupported major versions before opening a mutation session.
 - Keeps untyped transport behind the explicit `client.Raw()` escape hatch.
+- Uses `gateway-rest-api-lib`-aligned facade names so that library can replace
+  the internal REST transport without another public naming migration.
 
 This project manages certificate lifecycles. It is not a general-purpose SDK
 for every Airlock Gateway resource. See

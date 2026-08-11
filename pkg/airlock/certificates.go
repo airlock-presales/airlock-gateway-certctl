@@ -363,9 +363,9 @@ func (c *Client) DisconnectSSLCertificateFromNodes(ctx context.Context, certific
 	return c.DisconnectSSLCertificateRelationship(ctx, certificateID, CertificateNodes, nodeIdentifiers(ids))
 }
 
-// AddVirtualHostCertificateRelationship sets the to-one SSL certificate
-// relationship exposed by an Airlock 8.6 virtual host.
-func (c *Client) AddVirtualHostCertificateRelationship(ctx context.Context, virtualHostID VirtualHostID, certificateID CertificateID) error {
+// SetVirtualHostCertificate sets the to-one SSL certificate relationship of a
+// Virtual Host.
+func (c *Client) SetVirtualHostCertificate(ctx context.Context, virtualHostID VirtualHostID, certificateID CertificateID) error {
 	if err := validatePositiveID("virtual-host", int64(virtualHostID)); err != nil {
 		return err
 	}
@@ -377,9 +377,9 @@ func (c *Client) AddVirtualHostCertificateRelationship(ctx context.Context, virt
 	return c.doJSON(ctx, http.MethodPatch, path, body, nil, http.StatusNoContent)
 }
 
-// RemoveVirtualHostCertificateRelationship removes the to-one SSL certificate
-// relationship exposed by an Airlock 8.6 virtual host.
-func (c *Client) RemoveVirtualHostCertificateRelationship(ctx context.Context, virtualHostID VirtualHostID, certificateID CertificateID) error {
+// RemoveVirtualHostCertificate removes the to-one SSL certificate relationship
+// of a Virtual Host.
+func (c *Client) RemoveVirtualHostCertificate(ctx context.Context, virtualHostID VirtualHostID, certificateID CertificateID) error {
 	if err := validatePositiveID("virtual-host", int64(virtualHostID)); err != nil {
 		return err
 	}

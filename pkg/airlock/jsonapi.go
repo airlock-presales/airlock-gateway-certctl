@@ -6,7 +6,7 @@ import "encoding/json"
 type Document[T any] struct {
 	Data     T                 `json:"data,omitempty"`
 	Included []json.RawMessage `json:"included,omitempty"`
-	Errors   []APIErrorBody    `json:"errors,omitempty"`
+	Errors   []ErrorData       `json:"errors,omitempty"`
 	Meta     map[string]any    `json:"meta,omitempty"`
 }
 
@@ -40,8 +40,8 @@ type ResourceIdentifier struct {
 	ID   string `json:"id"`
 }
 
-// APIErrorBody models JSON:API error objects when the Gateway returns them.
-type APIErrorBody struct {
+// ErrorData models JSON:API error objects when the Gateway returns them.
+type ErrorData struct {
 	ID     string         `json:"id,omitempty"`
 	Status string         `json:"status,omitempty"`
 	Code   string         `json:"code,omitempty"`

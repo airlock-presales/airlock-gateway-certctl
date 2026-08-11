@@ -54,7 +54,7 @@ func (t *ConfigurationTransaction) CommitWithOptions(activationComment string, o
 		return errors.New("configuration transaction is closed")
 	}
 	if t.changed {
-		messages, err := t.client.Validate(t.ctx)
+		messages, err := t.client.ValidateConfiguration(t.ctx)
 		if err != nil {
 			return t.finish(err)
 		}

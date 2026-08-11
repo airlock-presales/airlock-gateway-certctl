@@ -219,15 +219,15 @@ func (c *Client) SyncKey(ctx context.Context, target CertificateTarget, key Key,
 	return result, nil
 }
 
-// GetCertificate resolves and reads a certificate in an isolated Airlock REST
+// GetManagedCertificate resolves and reads a certificate in an isolated Airlock REST
 // session. No configuration is activated.
-func (c *Client) GetCertificate(ctx context.Context, target CertificateTarget) (ManagedCertificate, error) {
-	return c.GetCertificateWithOptions(ctx, target, ReadOptions{})
+func (c *Client) GetManagedCertificate(ctx context.Context, target CertificateTarget) (ManagedCertificate, error) {
+	return c.GetManagedCertificateWithOptions(ctx, target, ReadOptions{})
 }
 
-// GetCertificateWithOptions reads a certificate and uses a transient
+// GetManagedCertificateWithOptions reads a certificate and uses a transient
 // passphrase when its private key is encrypted on Airlock Gateway.
-func (c *Client) GetCertificateWithOptions(ctx context.Context, target CertificateTarget, options ReadOptions) (ManagedCertificate, error) {
+func (c *Client) GetManagedCertificateWithOptions(ctx context.Context, target CertificateTarget, options ReadOptions) (ManagedCertificate, error) {
 	if err := validateTarget(target); err != nil {
 		return ManagedCertificate{}, err
 	}
@@ -235,7 +235,7 @@ func (c *Client) GetCertificateWithOptions(ctx context.Context, target Certifica
 	if err != nil {
 		return ManagedCertificate{}, err
 	}
-	certificate, err := transaction.GetCertificateWithOptions(target, options)
+	certificate, err := transaction.GetManagedCertificateWithOptions(target, options)
 	return certificate, errors.Join(err, transaction.Abort())
 }
 
@@ -412,14 +412,14 @@ func (t *ConfigurationTransaction) syncCertificateLocked(target CertificateTarge
 	return result, nil
 }
 
-// GetCertificate reads a typed certificate within this transaction.
-func (t *ConfigurationTransaction) GetCertificate(target CertificateTarget) (ManagedCertificate, error) {
-	return t.GetCertificateWithOptions(target, ReadOptions{})
+// GetManagedCertificate reads a typed certificate within this transaction.
+func (t *ConfigurationTransaction) GetManagedCertificate(target CertificateTarget) (ManagedCertificate, error) {
+	return t.GetManagedCertificateWithOptions(target, ReadOptions{})
 }
 
-// GetCertificateWithOptions reads typed state using a transient passphrase for
+// GetManagedCertificateWithOptions reads typed state using a transient passphrase for
 // encrypted keys.
-func (t *ConfigurationTransaction) GetCertificateWithOptions(target CertificateTarget, options ReadOptions) (ManagedCertificate, error) {
+func (t *ConfigurationTransaction) GetManagedCertificateWithOptions(target CertificateTarget, options ReadOptions) (ManagedCertificate, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {

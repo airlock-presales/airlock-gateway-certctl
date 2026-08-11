@@ -17,6 +17,11 @@
 // certificate contract must be made through Client.Raw, making the loss of
 // compile-time schema guarantees explicit.
 //
+// GatewayVersion, ValidateConfiguration, GetManagedCertificate, APIError, and
+// VersionSkewError use the canonical gateway-rest-api-lib vocabulary. This
+// package is the stable certificate-lifecycle facade behind which that REST
+// foundation can later replace the transport implementation.
+//
 // ForVirtualHost accepts the stable, operator-defined attributes.name returned
 // by /configuration/virtual-hosts and hides numeric resource IDs. CertificateID,
 // VirtualHostID, BackEndGroupID, RemoteJWKSID, and NodeID are JSON:API data.id

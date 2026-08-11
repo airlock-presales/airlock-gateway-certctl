@@ -40,15 +40,21 @@ var (
 	ErrUnsupportedGatewayVersion = errors.New("unsupported Airlock Gateway version")
 )
 
-// Error represents a non-expected HTTP response from Airlock Gateway.
-type Error struct {
+// APIError represents a non-expected HTTP response from Airlock Gateway. Its
+// name and principal fields align with gateway-rest-api-lib.
+type APIError struct {
+	// StatusCode is the Gateway HTTP response status.
 	StatusCode int
-	Body       string
-	Errors     []APIErrorBody
-	Meta       map[string]any
+	// Body is the raw response body for deliberate diagnostics. Error never
+	// includes it because it may contain submitted secret material.
+	Body string
+	// Errors contains decoded JSON:API error objects.
+	Errors []ErrorData
+	// Meta contains top-level JSON:API metadata.
+	Meta map[string]any
 }
 
-func (e *Error) Error() string {
+func (e *APIError) Error() string {
 	details := make([]string, 0, len(e.Errors))
 	for _, item := range e.Errors {
 		if item.Code != "" {
@@ -66,7 +72,7 @@ func (e *Error) Error() string {
 }
 
 // Is supports errors.Is with ErrAuthentication, ErrNotFound, and ErrConflict.
-func (e *Error) Is(target error) bool {
+func (e *APIError) Is(target error) bool {
 	switch target {
 	case ErrAuthentication:
 		return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
@@ -95,10 +101,10 @@ func IsConflict(err error) bool {
 	return errors.Is(err, ErrConflict)
 }
 
-func newResponseError(statusCode int, data []byte) *Error {
-	result := &Error{StatusCode: statusCode, Body: string(data)}
+func newResponseError(statusCode int, data []byte) *APIError {
+	result := &APIError{StatusCode: statusCode, Body: string(data)}
 	var document struct {
-		Errors []APIErrorBody `json:"errors"`
+		Errors []ErrorData    `json:"errors"`
 		Meta   map[string]any `json:"meta"`
 	}
 	if json.Unmarshal(data, &document) == nil {

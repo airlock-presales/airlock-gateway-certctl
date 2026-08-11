@@ -330,7 +330,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	case "validate":
 		return withSession(ctx, client, func() error {
-			messages, err := client.Validate(ctx)
+			messages, err := client.ValidateConfiguration(ctx)
 			if err != nil {
 				return err
 			}
@@ -361,7 +361,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return withCompatibleSession(ctx, client, func() error {
-			messages, err := client.Validate(ctx)
+			messages, err := client.ValidateConfiguration(ctx)
 			if err != nil {
 				return err
 			}
@@ -398,7 +398,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	case "version":
 		return withSession(ctx, client, func() error {
-			version, err := client.Version(ctx)
+			version, err := client.GatewayVersion(ctx)
 			if err != nil {
 				return err
 			}
@@ -509,7 +509,7 @@ func prepareConfig(ctx context.Context, client *airlock.Client, mut *mutateOptio
 
 func finishConfig(ctx context.Context, client *airlock.Client, mut *mutateOptions) error {
 	if mut.activate {
-		messages, err := client.Validate(ctx)
+		messages, err := client.ValidateConfiguration(ctx)
 		if err != nil {
 			return err
 		}

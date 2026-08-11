@@ -86,7 +86,7 @@ func TestLiveGatewayCertificateLifecycle(t *testing.T) {
 		t.Fatalf("determine baseline configuration: %v", err)
 	}
 	t.Logf("baseline configuration is %s", baselineConfigurationID)
-	baseline, baselineErr := transaction.GetCertificate(ForVirtualHost(VirtualHostName(virtualHostName)))
+	baseline, baselineErr := transaction.GetManagedCertificate(ForVirtualHost(VirtualHostName(virtualHostName)))
 	if baselineErr == nil {
 		baselineCertificate = &baseline
 	} else if !strings.Contains(baselineErr.Error(), "has no SSL certificate") {
@@ -224,7 +224,7 @@ func TestLiveGatewayConcurrentReadSessions(t *testing.T) {
 	started := time.Now()
 	for range workers {
 		go func() {
-			_, err := client.GetCertificate(ctx, ForVirtualHost(virtualHostName))
+			_, err := client.GetManagedCertificate(ctx, ForVirtualHost(virtualHostName))
 			errorsChannel <- err
 		}()
 	}
@@ -480,7 +480,7 @@ func equalLiveString(value any, wanted string) bool {
 
 func assertLiveBundle(t *testing.T, ctx context.Context, client *Client, virtualHostName string, expected CertificateBundle) {
 	t.Helper()
-	actual, err := client.GetCertificateWithOptions(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), ReadOptions{
+	actual, err := client.GetManagedCertificateWithOptions(ctx, ForVirtualHost(VirtualHostName(virtualHostName)), ReadOptions{
 		PrivateKeyPassphrase: expected.Key.passphrase,
 	})
 	if err != nil {
@@ -538,7 +538,7 @@ func restoreLiveConfiguration(t *testing.T, client *Client, configurationID stri
 		t.Errorf("restore: load configuration %s: %v", configurationID, err)
 		return
 	}
-	messages, err := client.Validate(ctx)
+	messages, err := client.ValidateConfiguration(ctx)
 	if err != nil {
 		t.Errorf("restore: validate configuration: %v", err)
 		return

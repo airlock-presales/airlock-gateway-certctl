@@ -3,6 +3,12 @@
 The public Go API provides typed certificate lifecycle operations for Airlock
 Gateway 8.x. It is implemented and live-tested with Airlock Gateway 8.6.0.
 
+Its hand-written facade uses the same canonical vocabulary as
+`gateway-rest-api-lib`, the designated future REST foundation. The current
+release keeps its existing transport internally until that library has a
+publishable module path and compatible toolchain baseline; callers use the
+stable facade described here and do not depend on that transport boundary.
+
 ## Client construction
 
 ```go
@@ -25,6 +31,18 @@ client, err := airlock.New(airlock.Config{
 
 `New` returns a concurrency-safe client. Each managed configuration
 transaction receives an independent cookie jar and Gateway working copy.
+
+## Gateway and configuration calls
+
+```go
+GatewayVersion(ctx context.Context) (string, error)
+ValidateConfiguration(ctx context.Context) ([]ValidationMessage, error)
+```
+
+`GatewayVersion` reports the appliance version and is intentionally distinct
+from `BuildVersion`, which reports the library/CLI build.
+`ValidateConfiguration` validates the configuration loaded in the current
+Gateway session; it does not validate a client or local certificate object.
 
 ## Certificate input
 
@@ -87,7 +105,7 @@ obtained through the corresponding typed list operation.
 `ManagedCertificate.Checksum` is calculated locally from canonical certificate,
 key, chain, root CA, and certificate-type checksums.
 
-`GetCertificateWithOptions` accepts `ReadOptions.PrivateKeyPassphrase` only for
+`GetManagedCertificateWithOptions` accepts `ReadOptions.PrivateKeyPassphrase` only for
 decoding an encrypted key returned by the Gateway; the passphrase is never
 persisted or JSON-serialized.
 
@@ -107,9 +125,11 @@ attribute maps:
   and `CertificateRelationship`;
 - typed CRUD: `ListSSLCertificates`, `GetSSLCertificate`,
   `CreateSSLCertificate`, `UpdateSSLCertificate`, and `DeleteSSLCertificate`;
-- lifecycle methods: `GetCertificate`, `SyncCertificate`,
+- lifecycle methods: `GetManagedCertificate`, `SyncCertificate`,
   `SyncLeafCertificate`, `SyncKey`, `StartConfigurationTransaction`, `Commit`,
   `CommitWithOptions`, and `Abort`;
+- to-one Virtual Host relationship methods: `SetVirtualHostCertificate` and
+  `RemoveVirtualHostCertificate`;
 - concurrency policies: `RejectConcurrentChanges` (default),
   `MergeNonConflictingChanges`, and `OverwriteConcurrentChanges`.
 
@@ -153,13 +173,15 @@ the validated bundle without persisting it.
 Use `ByCertificateID` only for a certificate not owned through a Virtual Host:
 
 ```go
-state, err := client.GetCertificate(ctx, airlock.ByCertificateID(17))
+state, err := client.GetManagedCertificate(ctx, airlock.ByCertificateID(17))
 ```
 
 ## Errors
 
-HTTP errors are available as `*airlock.Error`. Authentication, not-found,
-conflict, and unsupported-version conditions support `errors.Is`:
+HTTP errors are available as `*airlock.APIError`. An unsupported Gateway major
+release is returned as `*airlock.VersionSkewError`. Both names and their core
+fields align with `gateway-rest-api-lib`. Authentication, not-found, conflict,
+and unsupported-version conditions support `errors.Is`:
 
 ```go
 if errors.Is(err, airlock.ErrConflict) {

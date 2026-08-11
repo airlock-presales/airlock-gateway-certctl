@@ -18,19 +18,19 @@ const TestedGatewayVersion = "8.6.0"
 // compatibility contract is supported by the typed certificate client.
 const SupportedGatewayMajorVersion = "8"
 
-// GatewayVersionError reports a Gateway release outside the supported 8.x
-// major line.
-type GatewayVersionError struct {
+// VersionSkewError reports a Gateway release outside the supported 8.x major
+// line. Its name and fields match gateway-rest-api-lib.
+type VersionSkewError struct {
 	GatewayVersion string
-	TestedVersion  string
+	ClientVersion  string
 }
 
-func (e *GatewayVersionError) Error() string {
-	return fmt.Sprintf("Airlock Gateway %s is outside the supported %s.x certificate API line (tested with %s)", e.GatewayVersion, SupportedGatewayMajorVersion, e.TestedVersion)
+func (e *VersionSkewError) Error() string {
+	return fmt.Sprintf("Airlock Gateway %s is outside the supported %s.x certificate API line (client generated/tested with %s)", e.GatewayVersion, SupportedGatewayMajorVersion, e.ClientVersion)
 }
 
 // Unwrap supports errors.Is(err, ErrUnsupportedGatewayVersion).
-func (e *GatewayVersionError) Unwrap() error { return ErrUnsupportedGatewayVersion }
+func (e *VersionSkewError) Unwrap() error { return ErrUnsupportedGatewayVersion }
 
 // CreateSession creates an authenticated Gateway REST session using the configured API key.
 func (c *Client) CreateSession(ctx context.Context) error {
@@ -66,8 +66,8 @@ func (c *Client) CreateSessionAndLoadActiveConfiguration(ctx context.Context) er
 	return nil
 }
 
-// Version returns the Gateway version from /system/status/node when available.
-func (c *Client) Version(ctx context.Context) (string, error) {
+// GatewayVersion returns the Gateway version from /system/status/node.
+func (c *Client) GatewayVersion(ctx context.Context) (string, error) {
 	type nodeStatusAttributes struct {
 		Version string `json:"version"`
 	}
@@ -82,13 +82,13 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 // line. Managed mutation APIs invoke this check automatically before opening
 // a configuration transaction.
 func (c *Client) VerifyGatewayVersion(ctx context.Context) error {
-	version, err := c.Version(ctx)
+	version, err := c.GatewayVersion(ctx)
 	if err != nil {
 		return err
 	}
 	major, _, _ := strings.Cut(strings.TrimSpace(version), ".")
 	if major != SupportedGatewayMajorVersion {
-		return &GatewayVersionError{GatewayVersion: version, TestedVersion: TestedGatewayVersion}
+		return &VersionSkewError{GatewayVersion: version, ClientVersion: TestedGatewayVersion}
 	}
 	return nil
 }
@@ -133,8 +133,9 @@ type ValidationMessage struct {
 	Detail   string
 }
 
-// Validate returns Gateway validator messages with severity ERROR.
-func (c *Client) Validate(ctx context.Context) ([]ValidationMessage, error) {
+// ValidateConfiguration returns validation messages with severity ERROR for
+// the configuration currently loaded in this client's Gateway session.
+func (c *Client) ValidateConfiguration(ctx context.Context) ([]ValidationMessage, error) {
 	type validatorMessageAttributes struct {
 		Detail string `json:"detail"`
 	}

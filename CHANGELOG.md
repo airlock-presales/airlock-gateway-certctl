@@ -16,6 +16,12 @@
 
 ### Changed
 
+- Aligned the public facade with the designated `gateway-rest-api-lib`
+  foundation: `GatewayVersion`, `ValidateConfiguration`,
+  `GetManagedCertificate`, `SetVirtualHostCertificate`, `APIError`, and
+  `VersionSkewError` now describe their semantics explicitly.
+- `VersionSkewError.ClientVersion` and `ErrorData` align the corresponding
+  diagnostic vocabulary with the foundation library.
 - Split the long README into a concise project overview and focused API, CLI,
   certificate-rotation, development, and release documentation under `docs/`.
 - Updated the production-readiness release status after publication of the
@@ -33,6 +39,13 @@
 
 - Release documentation no longer claims that post-tag `main` changes are
   contained in the immutable `v0.0.4` tag.
+
+### Removed
+
+- Removed the ambiguous pre-v1 names `Version`, `Validate`, `GetCertificate`,
+  `AddVirtualHostCertificateRelationship`, `Error`, and
+  `GatewayVersionError`, plus the non-foundation `APIErrorBody` name; this is an
+  intentional breaking API cleanup.
 
 ## v0.0.4 - 2026-08-10
 

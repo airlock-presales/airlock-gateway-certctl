@@ -67,7 +67,7 @@ func TestStructuredConflictError(t *testing.T) {
 	if !IsConflict(err) {
 		t.Fatalf("expected conflict error, got %v", err)
 	}
-	var apiError *Error
+	var apiError *APIError
 	if !errors.As(err, &apiError) || len(apiError.Errors) != 1 || apiError.Errors[0].Code != "OUTDATED_CONFIGURATION" || apiError.Meta["rid"] != "request-1" {
 		t.Fatalf("structured Airlock error was not decoded: %#v", apiError)
 	}
@@ -153,7 +153,7 @@ func TestCreateSessionAndLoadActiveConfiguration(t *testing.T) {
 	}
 }
 
-func TestAddVirtualHostCertificateRelationshipUsesGateway86Path(t *testing.T) {
+func TestSetVirtualHostCertificateUsesGateway86Path(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
 			t.Fatalf("method mismatch: %s", r.Method)
@@ -177,8 +177,37 @@ func TestAddVirtualHostCertificateRelationshipUsesGateway86Path(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
-	if err := client.AddVirtualHostCertificateRelationship(context.Background(), 6, 11); err != nil {
-		t.Fatalf("AddVirtualHostCertificateRelationship returned error: %v", err)
+	if err := client.SetVirtualHostCertificate(context.Background(), 6, 11); err != nil {
+		t.Fatalf("SetVirtualHostCertificate returned error: %v", err)
+	}
+}
+
+func TestRemoveVirtualHostCertificateUsesGateway86Path(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method mismatch: %s", r.Method)
+		}
+		if r.URL.Path != "/airlock/rest/configuration/virtual-hosts/6/relationships/ssl-certificate" {
+			t.Fatalf("path mismatch: %s", r.URL.Path)
+		}
+		var body Document[ResourceIdentifier]
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		want := ResourceIdentifier{Type: SSLCertificateType, ID: "11"}
+		if !reflect.DeepEqual(body.Data, want) {
+			t.Fatalf("relationship body mismatch\nwant: %#v\n got: %#v", want, body.Data)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	if err := client.RemoveVirtualHostCertificate(context.Background(), 6, 11); err != nil {
+		t.Fatalf("RemoveVirtualHostCertificate returned error: %v", err)
 	}
 }
 
@@ -322,9 +351,12 @@ func TestVerifyGatewayVersion(t *testing.T) {
 				if !errors.Is(err, ErrUnsupportedGatewayVersion) {
 					t.Fatalf("expected ErrUnsupportedGatewayVersion, got %v", err)
 				}
-				var versionError *GatewayVersionError
+				var versionError *VersionSkewError
 				if !errors.As(err, &versionError) {
-					t.Fatalf("expected GatewayVersionError, got %T", err)
+					t.Fatalf("expected VersionSkewError, got %T", err)
+				}
+				if versionError.ClientVersion != TestedGatewayVersion {
+					t.Fatalf("unexpected client version %q", versionError.ClientVersion)
 				}
 			}
 		})

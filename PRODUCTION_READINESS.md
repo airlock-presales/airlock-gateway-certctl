@@ -13,6 +13,9 @@ replacement for every function of a general-purpose appliance SDK.
 - Atomic certificate/key synchronization, including leaf-only and key-only
   updates, configuration validation, activation, and session cleanup.
 - Stable Virtual Host name targeting for the normal managed workflow.
+- A facade vocabulary aligned with the designated `gateway-rest-api-lib`
+  foundation (`GatewayVersion`, `APIError`, `VersionSkewError`, and explicit
+  managed-certificate/configuration method names).
 
 Managed mutations fail before opening a configuration session when the target
 does not report an Airlock Gateway 8.x version. `VerifyGatewayVersion` and the
@@ -79,6 +82,10 @@ be published under a newer semantic version and must not move the immutable
 
 ## Known boundaries
 
+- `gateway-rest-api-lib` is not yet imported directly because its current
+  workspace copy uses a placeholder module path and a newer Go toolchain
+  baseline. The stable certctl facade is the migration boundary; replacing its
+  internal transport requires the same unit, OpenAPI, and live lifecycle gates.
 - Compatibility is asserted for Airlock Gateway 8.x and tested with 8.6.0.
   The API is expected to remain compatible within major version 8; a new major
   version requires a fresh OpenAPI and live lifecycle qualification before
