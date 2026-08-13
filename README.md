@@ -97,12 +97,11 @@ changes.
 
 Use `CreateManagedCertificate` to safely pre-stage a certificate before its
 Virtual Host exists; its result contains the Gateway-assigned ID for later
-binding. Configuration Center displays a comment on the built-in
-`test.certificate`, but does not offer certificate comments for normal
-customer-created objects, and the public Airlock 8.6 REST v3
-`SSLCertificateDto` does not expose that default-object metadata.
-Library-supplied audit text is therefore recorded as a configuration
-activation comment.
+binding. Configuration Center supports editable certificate comments, but the
+public Airlock 8.6 REST v3 `SSLCertificateDto` does not expose them. The GUI
+uses an internal JSF form, not the supported API-key REST contract used by this
+library. Library-supplied audit text is therefore recorded as a configuration
+activation comment; it is distinct from the GUI certificate comment.
 
 See the [Go API reference](docs/API.md) for typed CRUD, transaction behavior,
 encrypted keys, error classification, and raw API access.

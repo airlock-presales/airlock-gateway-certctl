@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.0.10 - 2026-08-13
+
+### Fixed
+
+- Corrected the certificate-comment documentation after verification against
+  Configuration Center: comments are editable in the GUI, but the GUI writes
+  them through an internal JSF form rather than the public REST v3 certificate
+  resource. The API-key-based library therefore does not claim support for
+  setting them through the supported REST contract.
+
 ## v0.0.9 - 2026-08-13
 
 ### Added
@@ -14,9 +24,8 @@
 
 ### Changed
 
-- Documented that the comment shown on the built-in `test.certificate` is not
-  an editable customer-certificate feature and is not exposed by the Airlock
-  8.6 public REST v3 resource; activation comments remain available for audit.
+- Documented the certificate-comment behavior known at release time. This was
+  clarified after release; see `v0.0.10`.
 
 ## v0.0.8 - 2026-08-11
 

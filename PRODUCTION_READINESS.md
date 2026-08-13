@@ -93,11 +93,13 @@ be published under a newer semantic version and must not move the immutable
   The API is expected to remain compatible within major version 8; a new major
   version requires a fresh OpenAPI and live lifecycle qualification before
   support is claimed.
-- Configuration Center displays non-editable comment metadata on the built-in
-  `test.certificate`, but provides no certificate-comment feature for normal
-  customer-created objects. Gateway 8.6 also does not expose that metadata on
-  the public REST v3 `SSLCertificateDto`. The library records audit descriptions
-  as configuration activation comments instead.
+- Configuration Center supports editable certificate comments through an
+  internal JSF form. Gateway 8.6 does not expose this attribute on the public
+  REST v3 `SSLCertificateDto`. Automating the GUI form would require separate
+  password authentication, CSRF and JSF state handling, and retransmission of
+  certificate private-key material, so it is deliberately outside the
+  production API-key contract. The library records audit descriptions as
+  configuration activation comments instead.
 - Encrypted private-key updates require the caller to supply the relevant
   passphrase because the Gateway exposes it as write-only.
 - `OverwriteConcurrentChanges` can replace another operator's changes and is

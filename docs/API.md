@@ -123,16 +123,21 @@ Managed writes invoked through the same `Client`, and calls sharing one
 transaction, are mutex-serialized. Appliance-side conflict policy still
 protects against configuration changes made by other clients or GUI sessions.
 
-Configuration Center displays comment metadata on the built-in
-`test.certificate`, but does not provide an editable certificate-comment field
-for normal customer-created objects. That default-object metadata is also not
-present in the public Airlock Gateway 8.6 REST v3 representation: the live
+Configuration Center supports editable certificate comments. A packet-level
+verification against Gateway 8.6.0 showed that the GUI submits the comment as
+`sslCertificateForm:sslCertificateDetailContainerComment` to the internal JSF
+page `/airlock/configuration/sslcert/sslCertificate.jsf`. This is not a public
+REST v3 endpoint: it requires a GUI login, CSRF token, JSF view state, and a
+full form submission that includes the certificate and private key.
+
+The supported API-key REST representation remains different. Its live
 `SSLCertificateDto` contains only certificate, private key, passphrase, chain,
-root CA, and certificate type, and a GET of the built-in certificate likewise
-returns no comment. The library therefore cannot set or preserve that comment
-through the supported REST contract. Audit text supplied through
-`CreateOptions.ActivationComment` or `SyncOptions.ActivationComment` is stored
-as an activation/configuration comment instead.
+root CA, and certificate type; it defines no comment attribute. This library
+therefore does not automate the undocumented GUI protocol and cannot set the
+GUI certificate comment through its supported REST contract. Audit text
+supplied through `CreateOptions.ActivationComment` or
+`SyncOptions.ActivationComment` is stored as an activation/configuration
+comment instead and must not be confused with the certificate comment.
 
 `GetManagedCertificateWithOptions` accepts `ReadOptions.PrivateKeyPassphrase` only for
 decoding an encrypted key returned by the Gateway; the passphrase is never
