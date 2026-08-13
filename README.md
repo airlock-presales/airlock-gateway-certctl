@@ -95,6 +95,15 @@ compares canonical checksums, applies the change, validates and activates it,
 and terminates the session. The safe default rejects concurrent appliance
 changes.
 
+Use `CreateManagedCertificate` to safely pre-stage a certificate before its
+Virtual Host exists; its result contains the Gateway-assigned ID for later
+binding. Configuration Center displays a comment on the built-in
+`test.certificate`, but does not offer certificate comments for normal
+customer-created objects, and the public Airlock 8.6 REST v3
+`SSLCertificateDto` does not expose that default-object metadata.
+Library-supplied audit text is therefore recorded as a configuration
+activation comment.
+
 See the [Go API reference](docs/API.md) for typed CRUD, transaction behavior,
 encrypted keys, error classification, and raw API access.
 

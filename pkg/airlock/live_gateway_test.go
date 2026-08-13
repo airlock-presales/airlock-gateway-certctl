@@ -16,11 +16,85 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/youmark/pkcs8"
 )
+
+func TestLiveGatewayConcurrentUnboundManagedCreate(t *testing.T) {
+	if os.Getenv("AIRLOCK_LIVE_TEST") != "1" {
+		t.Skip("set AIRLOCK_LIVE_TEST=1 to run the destructive live Gateway test")
+	}
+	client, err := New(Config{
+		Address: strings.TrimSpace(os.Getenv("AIRLOCK_HOST")), APIKey: strings.TrimSpace(os.Getenv("AIRLOCK_API_KEY")),
+		Timeout: 90 * time.Second, InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	baselineTransaction, err := client.StartConfigurationTransaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineConfigurationID, err := currentLiveConfigurationID(ctx, baselineTransaction.client)
+	if abortErr := baselineTransaction.Abort(); err == nil {
+		err = abortErr
+	}
+	if err != nil {
+		t.Fatalf("record baseline configuration: %v", err)
+	}
+	bundle, _ := liveCertificateBundle(t, "unbound-"+fmt.Sprintf("%d", time.Now().UnixNano())+".example.invalid")
+	const workers = 3
+	results := make(chan SyncResult, workers)
+	errorsFound := make(chan error, workers)
+	var wait sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			result, err := client.CreateManagedCertificate(ctx, bundle, CreateOptions{
+				ActivationComment: fmt.Sprintf("airlock-certctl live test: pre-stage unbound certificate %d", index),
+			})
+			results <- result
+			errorsFound <- err
+		}(worker)
+	}
+	wait.Wait()
+	close(results)
+	close(errorsFound)
+	var createdIDs []CertificateID
+	for result := range results {
+		if result.Created {
+			createdIDs = append(createdIDs, result.Certificate.ID)
+		}
+	}
+	if len(createdIDs) != 0 {
+		defer restoreLiveConfiguration(t, client, baselineConfigurationID, createdIDs[0], nil, "")
+	}
+	for err := range errorsFound {
+		if err != nil {
+			t.Fatalf("parallel unbound create failed: %v", err)
+		}
+	}
+	if len(createdIDs) != workers {
+		t.Fatalf("created %d of %d unbound resources", len(createdIDs), workers)
+	}
+	seen := make(map[CertificateID]struct{}, workers)
+	for _, id := range createdIDs {
+		if id == 0 {
+			t.Fatal("Gateway returned a zero certificate ID")
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != workers {
+		t.Fatalf("Gateway returned duplicate IDs: %v", createdIDs)
+	}
+	t.Logf("%d parallel producers safely created serialized, unbound certificate resources", workers)
+}
 
 // TestLiveGatewayCertificateLifecycle is an opt-in integration test. It
 // addresses a certificate only through the logical virtual-host name, deploys

@@ -22,6 +22,7 @@ type releaseCertificateAPI interface {
 	RemoveVirtualHostCertificate(context.Context, airlock.VirtualHostID, airlock.CertificateID) error
 	GetManagedCertificate(context.Context, airlock.CertificateTarget) (airlock.ManagedCertificate, error)
 	GetManagedCertificateWithOptions(context.Context, airlock.CertificateTarget, airlock.ReadOptions) (airlock.ManagedCertificate, error)
+	CreateManagedCertificate(context.Context, airlock.CertificateBundle, airlock.CreateOptions) (airlock.SyncResult, error)
 }
 
 var _ releaseCertificateAPI = (*airlock.Client)(nil)

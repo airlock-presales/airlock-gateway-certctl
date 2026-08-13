@@ -105,6 +105,35 @@ obtained through the corresponding typed list operation.
 `ManagedCertificate.Checksum` is calculated locally from canonical certificate,
 key, chain, root CA, and certificate-type checksums.
 
+To create a certificate before its Virtual Host exists, use the unbound
+managed flow:
+
+```go
+result, err := client.CreateManagedCertificate(ctx, bundle, airlock.CreateOptions{
+    ActivationComment: "Pre-stage certificate for a future Virtual Host",
+})
+certificateID := result.Certificate.ID
+```
+
+`CreateManagedCertificate` opens, validates, activates, and closes a Gateway
+configuration transaction. `ConfigurationTransaction.CreateManagedCertificate`
+stages the same operation in a caller-owned transaction. Both return
+`SyncResult` with `Created=true`, `Bound=false`, and the Gateway-assigned ID.
+Managed writes invoked through the same `Client`, and calls sharing one
+transaction, are mutex-serialized. Appliance-side conflict policy still
+protects against configuration changes made by other clients or GUI sessions.
+
+Configuration Center displays comment metadata on the built-in
+`test.certificate`, but does not provide an editable certificate-comment field
+for normal customer-created objects. That default-object metadata is also not
+present in the public Airlock Gateway 8.6 REST v3 representation: the live
+`SSLCertificateDto` contains only certificate, private key, passphrase, chain,
+root CA, and certificate type, and a GET of the built-in certificate likewise
+returns no comment. The library therefore cannot set or preserve that comment
+through the supported REST contract. Audit text supplied through
+`CreateOptions.ActivationComment` or `SyncOptions.ActivationComment` is stored
+as an activation/configuration comment instead.
+
 `GetManagedCertificateWithOptions` accepts `ReadOptions.PrivateKeyPassphrase` only for
 decoding an encrypted key returned by the Gateway; the passphrase is never
 persisted or JSON-serialized.
@@ -125,7 +154,7 @@ attribute maps:
   and `CertificateRelationship`;
 - typed CRUD: `ListSSLCertificates`, `GetSSLCertificate`,
   `CreateSSLCertificate`, `UpdateSSLCertificate`, and `DeleteSSLCertificate`;
-- lifecycle methods: `GetManagedCertificate`, `SyncCertificate`,
+- lifecycle methods: `GetManagedCertificate`, `CreateManagedCertificate`, `SyncCertificate`,
   `SyncLeafCertificate`, `SyncKey`, `StartConfigurationTransaction`, `Commit`,
   `CommitWithOptions`, and `Abort`;
 - to-one Virtual Host relationship methods: `SetVirtualHostCertificate` and
@@ -156,9 +185,9 @@ Gateway working configuration and become visible together at activation. The
 zero-value `SyncOptions` rejects an outdated configuration. Merge and
 overwrite behavior must be selected explicitly.
 
-Every transaction owns a separate cookie jar and server-side working copy. A
-single `Client` can therefore be used concurrently without mixing appliance
-sessions.
+Every transaction owns a separate cookie jar and server-side working copy.
+Managed writes on one `Client` are additionally serialized to keep a parallel
+producer/consumer pipeline from activating overlapping working copies.
 
 `SyncLeafCertificate` and `SyncKey` read the other side of the existing pair,
 verify the resulting pair locally, and still write the complete pair

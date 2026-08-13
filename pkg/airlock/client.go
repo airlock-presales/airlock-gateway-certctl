@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -121,6 +122,7 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	userAgent  string
+	managedMu  *sync.Mutex
 }
 
 // RawClient exposes the untyped transport escape hatch. Prefer the typed
@@ -260,6 +262,7 @@ func NewClient(host, apiKey string, opts ...Option) (*Client, error) {
 			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
 		userAgent: defaultUserAgent(),
+		managedMu: &sync.Mutex{},
 	}
 
 	for _, opt := range opts {
@@ -289,6 +292,7 @@ func (c *Client) newSessionClient() (*Client, error) {
 		apiKey:     c.apiKey,
 		httpClient: &httpClient,
 		userAgent:  c.userAgent,
+		managedMu:  c.managedMu,
 	}, nil
 }
 

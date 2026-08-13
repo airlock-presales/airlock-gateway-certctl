@@ -1,6 +1,42 @@
 # Changelog
 
-## Unreleased
+## v0.0.9 - 2026-08-13
+
+### Added
+
+- Mutex-serialized `Client.CreateManagedCertificate` and
+  `ConfigurationTransaction.CreateManagedCertificate` operations for safely
+  creating and activating unbound certificate objects before a Virtual Host
+  exists.
+- Unit coverage for transaction ownership, serialization, commit behavior, and
+  failure cleanup, plus a live parallel-producer lifecycle test on Airlock
+  Gateway 8.6.0.
+
+### Changed
+
+- Documented that the comment shown on the built-in `test.certificate` is not
+  an editable customer-certificate feature and is not exposed by the Airlock
+  8.6 public REST v3 resource; activation comments remain available for audit.
+
+## v0.0.8 - 2026-08-11
+
+### Changed
+
+- Aligned the public facade with the designated `gateway-rest-api-lib`
+  foundation: `GatewayVersion`, `ValidateConfiguration`,
+  `GetManagedCertificate`, `SetVirtualHostCertificate`, `APIError`, and
+  `VersionSkewError` now describe their semantics explicitly.
+- Aligned `VersionSkewError.ClientVersion` and `ErrorData` with the diagnostic
+  vocabulary of the foundation library.
+
+### Removed
+
+- Removed the ambiguous pre-v1 names `Version`, `Validate`, `GetCertificate`,
+  `AddVirtualHostCertificateRelationship`, `Error`, `GatewayVersionError`, and
+  the non-foundation `APIErrorBody` name. This was an intentional pre-v1
+  breaking API cleanup.
+
+## v0.0.7 - 2026-08-11
 
 ### Added
 
@@ -8,6 +44,34 @@
   properties, return values, and the origin of Gateway resource IDs.
 - Added the X.509 serial number to typed certificate metadata and documented
   every exported certificate property.
+- Added a package example demonstrating the managed `SyncCertificate` flow.
+
+### Changed
+
+- Expanded exported Go documentation for client configuration, certificate
+  bundles, managed results, identifiers, and certificate metadata.
+
+## v0.0.6 - 2026-08-10
+
+### Changed
+
+- Split the long README into a concise project overview and focused API, CLI,
+  certificate-rotation, development, and release documentation under `docs/`.
+- Included the documentation directory in release archives.
+- Updated the production-readiness status for the immutable `v0.0.5`
+  baseline.
+
+## v0.0.5 - 2026-08-10
+
+### Added
+
+- Fully typed SSL certificate CRUD resources, attributes, IDs, filters, and
+  relationship targets.
+- Explicit `Client.Raw()` transport for endpoints outside the typed release
+  contract.
+- Idiomatic `errors.Is` support for authentication, not-found, and conflict
+  responses.
+- Gateway 8.x version verification through `VerifyGatewayVersion`.
 - A production-readiness contract with explicit supported scope, release
   gates, operational acceptance criteria, and known boundaries.
 - A credential-free `build-info` CLI command and semantic build-version
@@ -16,22 +80,16 @@
 
 ### Changed
 
-- Aligned the public facade with the designated `gateway-rest-api-lib`
-  foundation: `GatewayVersion`, `ValidateConfiguration`,
-  `GetManagedCertificate`, `SetVirtualHostCertificate`, `APIError`, and
-  `VersionSkewError` now describe their semantics explicitly.
-- `VersionSkewError.ClientVersion` and `ErrorData` align the corresponding
-  diagnostic vocabulary with the foundation library.
-- Split the long README into a concise project overview and focused API, CLI,
-  certificate-rotation, development, and release documentation under `docs/`.
-- Updated the production-readiness release status after publication of the
-  immutable `v0.0.5` baseline.
 - Managed library transactions and all mutating CLI commands now reject an
   unsupported Gateway version before opening a configuration session.
 - Unsupported versions can be classified with
   `errors.Is(err, airlock.ErrUnsupportedGatewayVersion)`.
 - The default User-Agent now contains the embedded release version instead of
   a hard-coded development version.
+- PATCH attributes distinguish omitted fields from explicit empty values.
+- The remote-JWKS relationship uses the authoritative Airlock 8.6 path
+  `json-web-key-sets/remotes`.
+- Error strings no longer include raw appliance bodies.
 - Error strings no longer include server-provided error titles, which may echo
   submitted secret values; typed diagnostic fields remain available explicitly.
 
@@ -42,10 +100,9 @@
 
 ### Removed
 
-- Removed the ambiguous pre-v1 names `Version`, `Validate`, `GetCertificate`,
-  `AddVirtualHostCertificateRelationship`, `Error`, and
-  `GatewayVersionError`, plus the non-foundation `APIErrorBody` name; this is an
-  intentional breaking API cleanup.
+- Direct `Client.DoJSON` and `Client.DoRaw`; use `Client.Raw()` for deliberate
+  untyped access.
+- Map-based certificate CRUD and free-form relationship names.
 
 ## v0.0.4 - 2026-08-10
 
@@ -59,13 +116,6 @@
 - Independent per-transaction Airlock REST sessions for safe concurrent client use.
 - Explicit reject, merge, and overwrite policies for appliance-side concurrent changes.
 - Live lifecycle, concurrency, frontend TLS, restore, and OpenAPI contract tests.
-- Fully typed SSL certificate CRUD resources, attributes, IDs, filters, and
-  relationship targets.
-- Explicit `Client.Raw()` transport for endpoints outside the typed release
-  contract.
-- Idiomatic `errors.Is` support for authentication, not-found, and conflict
-  responses.
-- Gateway 8.6 version verification through `VerifyGatewayVersion`.
 
 ### Changed
 
@@ -73,15 +123,42 @@
 - Built-in Airlock certificate resources are replaced and rebound instead of patched.
 - Virtual Host certificate relationship payloads follow the Airlock 8.6 to-one schema.
 - Structured Airlock error details and request metadata are exposed on `Error`.
-- PATCH attributes distinguish omitted fields from explicit empty values.
-- The remote-JWKS relationship uses the authoritative Airlock 8.6 path
-  `json-web-key-sets/remotes`.
-- Error strings no longer include raw appliance bodies that could echo secret
-  request material.
 
 ### Removed
 
 - The stringly typed, resource-ID-driven certificate synchronization API.
-- Direct `Client.DoJSON` and `Client.DoRaw`; use `Client.Raw()` for deliberate
-  untyped access.
-- Map-based certificate CRUD and free-form relationship names.
+
+## v0.0.3 - 2026-07-14
+
+### Added
+
+- Transaction-based certificate synchronization with configuration validation,
+  save, activation, and cleanup.
+- Trusted-root-CA handling, configurable TLS/client settings, and live SSL
+  certificate lifecycle tests.
+- Certificate synchronization and validation unit coverage.
+
+### Changed
+
+- Corrected accepted certificate create/update status codes and Virtual Host
+  certificate relationship paths.
+- Updated the GitHub Actions checkout dependency and workflow-script
+  permissions.
+
+## v0.0.2 - 2026-05-28
+
+### Changed
+
+- Published an additional version tag for the initial release. `v0.0.2` points
+  to the same source commit as `v0.0.1` and contains no source changes.
+
+## v0.0.1 - 2026-05-28
+
+### Added
+
+- Initial Go client library and CLI for Airlock Gateway SSL certificate
+  management.
+- REST session and configuration lifecycle operations, certificate CRUD,
+  relationship management, OpenAPI schema download, secret redaction, and PEM
+  attribute generation.
+- CI, security scanning, dependency updates, and release automation.

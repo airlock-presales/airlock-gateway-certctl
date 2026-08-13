@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -219,6 +220,61 @@ func TestSyncCertificateForVirtualHostCreatesAndBindsAtomically(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("call sequence mismatch\nwant: %#v\n got: %#v", wantCalls, calls)
+	}
+}
+
+func TestConfigurationTransactionCreatesUnboundCertificatesConcurrently(t *testing.T) {
+	bundle := newTestBundle(t, "unbound.example")
+	var nextID atomic.Int64
+	nextID.Store(80)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/airlock/rest/configuration/ssl-certificates" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var document Document[Resource[sslCertificateAttributes]]
+		if err := json.NewDecoder(r.Body).Decode(&document); err != nil {
+			t.Fatal(err)
+		}
+		document.Data.ID = strconv.FormatInt(nextID.Add(1), 10)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(document)
+	}))
+	defer server.Close()
+	client, err := New(Config{Address: server.URL, APIKey: "api-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := &ConfigurationTransaction{client: client, ctx: context.Background()}
+	const workers = 8
+	results := make(chan SyncResult, workers)
+	errorsFound := make(chan error, workers)
+	var wait sync.WaitGroup
+	for range workers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			result, err := transaction.CreateManagedCertificate(bundle)
+			results <- result
+			errorsFound <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	close(errorsFound)
+	for err := range errorsFound {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := make(map[CertificateID]struct{}, workers)
+	for result := range results {
+		if !result.Changed || !result.Created || result.Bound || result.VirtualHost != nil {
+			t.Fatalf("unexpected unbound create result: %#v", result)
+		}
+		ids[result.Certificate.ID] = struct{}{}
+	}
+	if len(ids) != workers || !transaction.changed {
+		t.Fatalf("created %d unique resources; transaction changed=%t", len(ids), transaction.changed)
 	}
 }
 

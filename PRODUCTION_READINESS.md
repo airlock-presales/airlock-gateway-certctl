@@ -12,6 +12,8 @@ replacement for every function of a general-purpose appliance SDK.
   Back-end Groups, remote JSON Web Key Sets, and Nodes.
 - Atomic certificate/key synchronization, including leaf-only and key-only
   updates, configuration validation, activation, and session cleanup.
+- Mutex-serialized creation and activation of unbound certificate resources
+  before a Virtual Host exists.
 - Stable Virtual Host name targeting for the normal managed workflow.
 - A facade vocabulary aligned with the designated `gateway-rest-api-lib`
   foundation (`GatewayVersion`, `APIError`, `VersionSkewError`, and explicit
@@ -65,10 +67,11 @@ go test ./pkg/airlock -run Live -v
 
 The live gates cover the appliance OpenAPI contract for the target 8.x release,
 certificate lifecycle, independent concurrent sessions, frontend TLS
-presentation, and restoration of the original configuration. A production
-rollout additionally requires a trusted management CA, a least-privilege API
-key, customer-specific topology and HA/failover acceptance, backup/restore
-validation, and protected handling of certificate keys and passphrases.
+presentation, concurrent unbound managed creation, and restoration of the
+original configuration. A production rollout additionally requires a trusted
+management CA, a least-privilege API key, customer-specific topology and
+HA/failover acceptance, backup/restore validation, and protected handling of
+certificate keys and passphrases.
 
 ## Release integrity
 
@@ -90,6 +93,11 @@ be published under a newer semantic version and must not move the immutable
   The API is expected to remain compatible within major version 8; a new major
   version requires a fresh OpenAPI and live lifecycle qualification before
   support is claimed.
+- Configuration Center displays non-editable comment metadata on the built-in
+  `test.certificate`, but provides no certificate-comment feature for normal
+  customer-created objects. Gateway 8.6 also does not expose that metadata on
+  the public REST v3 `SSLCertificateDto`. The library records audit descriptions
+  as configuration activation comments instead.
 - Encrypted private-key updates require the caller to supply the relevant
   passphrase because the Gateway exposes it as write-only.
 - `OverwriteConcurrentChanges` can replace another operator's changes and is

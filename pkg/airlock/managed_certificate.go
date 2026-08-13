@@ -131,6 +131,25 @@ type SyncResult struct {
 	Bound bool `json:"bound"`
 }
 
+// CreateOptions controls activation of a new, deliberately unbound SSL
+// certificate resource. The zero value uses conservative conflict handling
+// and enables failover activation.
+type CreateOptions struct {
+	// ActivationComment is recorded in the Gateway configuration history.
+	ActivationComment string
+	// ConflictPolicy defaults to RejectConcurrentChanges.
+	ConflictPolicy ConflictPolicy
+	// DisableFailoverActivation prevents activation on failover nodes.
+	DisableFailoverActivation bool
+}
+
+func (o CreateOptions) activationOptions() ActivationOptions {
+	return SyncOptions{
+		ConflictPolicy:            o.ConflictPolicy,
+		DisableFailoverActivation: o.DisableFailoverActivation,
+	}.activationOptions()
+}
+
 type sslCertificateAttributes struct {
 	Certificate       string   `json:"certificate"`
 	PrivateKey        string   `json:"privateKey"`
@@ -156,11 +175,37 @@ func (c *Client) SyncCertificate(ctx context.Context, target CertificateTarget, 
 	if err := bundle.validate(); err != nil {
 		return SyncResult{}, err
 	}
+	c.managedMu.Lock()
+	defer c.managedMu.Unlock()
 	transaction, err := c.StartConfigurationTransaction(ctx)
 	if err != nil {
 		return SyncResult{}, err
 	}
 	result, err := transaction.SyncCertificate(target, bundle)
+	if err != nil {
+		return SyncResult{}, errors.Join(err, transaction.Abort())
+	}
+	if err := transaction.CommitWithOptions(options.ActivationComment, options.activationOptions()); err != nil {
+		return SyncResult{}, err
+	}
+	return result, nil
+}
+
+// CreateManagedCertificate validates and atomically activates a new SSL
+// certificate resource without requiring or creating a Virtual Host. Managed
+// writes invoked through the same Client are serialized, preventing parallel
+// consumers from racing independent Gateway working configurations.
+func (c *Client) CreateManagedCertificate(ctx context.Context, bundle CertificateBundle, options CreateOptions) (SyncResult, error) {
+	if err := bundle.validate(); err != nil {
+		return SyncResult{}, err
+	}
+	c.managedMu.Lock()
+	defer c.managedMu.Unlock()
+	transaction, err := c.StartConfigurationTransaction(ctx)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	result, err := transaction.CreateManagedCertificate(bundle)
 	if err != nil {
 		return SyncResult{}, errors.Join(err, transaction.Abort())
 	}
@@ -181,6 +226,8 @@ func (c *Client) SyncLeafCertificate(ctx context.Context, target CertificateTarg
 	if !certificate.valid() {
 		return SyncResult{}, errors.New("certificate was not created by ParseCertificate")
 	}
+	c.managedMu.Lock()
+	defer c.managedMu.Unlock()
 	transaction, err := c.StartConfigurationTransaction(ctx)
 	if err != nil {
 		return SyncResult{}, err
@@ -205,6 +252,8 @@ func (c *Client) SyncKey(ctx context.Context, target CertificateTarget, key Key,
 	if !key.valid() {
 		return SyncResult{}, errors.New("key was not created by ParseKey or ParseEncryptedKey")
 	}
+	c.managedMu.Lock()
+	defer c.managedMu.Unlock()
 	transaction, err := c.StartConfigurationTransaction(ctx)
 	if err != nil {
 		return SyncResult{}, err
@@ -245,6 +294,36 @@ func (t *ConfigurationTransaction) SyncCertificate(target CertificateTarget, bun
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.syncCertificateLocked(target, bundle)
+}
+
+// CreateManagedCertificate stages a new unbound SSL certificate resource in
+// this transaction. It is safe for concurrent goroutines using the same
+// transaction; Commit or Abort must be called after all staged calls finish.
+func (t *ConfigurationTransaction) CreateManagedCertificate(bundle CertificateBundle) (SyncResult, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return SyncResult{}, errors.New("configuration transaction is closed")
+	}
+	if err := bundle.validate(); err != nil {
+		return SyncResult{}, err
+	}
+	attributes := attributesFromBundle(bundle)
+	created, err := t.createCertificate(attributes)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	if created.Attributes.Certificate == "" {
+		created.Attributes = attributes
+	} else if created.Attributes.Passphrase == "" {
+		created.Attributes.Passphrase = attributes.Passphrase
+	}
+	managed, err := managedCertificateFromResource(created, bundle.Key.passphrase)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	t.changed = true
+	return SyncResult{Certificate: managed, Changed: true, Created: true}, nil
 }
 
 // SyncLeafCertificate stages a leaf-only change while always writing a
