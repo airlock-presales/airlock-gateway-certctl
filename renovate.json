@@ -1,0 +1,27 @@
+{
+  "enabledManagers": [
+    "gomod"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "gomod"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Keep Go version current",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "enabled": true,
+      "rangeStrategy": "bump"
+    }
+  ]
+}
