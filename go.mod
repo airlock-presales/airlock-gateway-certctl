@@ -1,6 +1,6 @@
 module github.com/airlock-presales/airlock-gateway-certctl
 
-go 1.25.0
+go 1.27.0
 
 require github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 
