@@ -10,7 +10,7 @@
       "enabled": false
     },
     {
-      "description": "Keep Go version current",
+      "description": "Go patch updates",
       "matchManagers": [
         "gomod"
       ],
@@ -19,6 +19,29 @@
       ],
       "matchDepTypes": [
         "golang"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "enabled": true,
+      "rangeStrategy": "bump",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Go minor updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "matchUpdateTypes": [
+        "minor"
       ],
       "enabled": true,
       "rangeStrategy": "bump"
