@@ -1,52 +1,33 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
   "dependencyDashboard": {
     "enabled": true
   },
-  "enabledManagers": [
-    "gomod"
-  ],
+  "rangeStrategy": "bump",
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "ignoreTests": false,
+  "dependencyDashboardApproval": false,
+  "minimumReleaseAge": "0 days",
+  "prConcurrentLimit": 10,
   "packageRules": [
     {
-      "matchManagers": [
-        "gomod"
-      ],
-      "enabled": false
-    },
-    {
-      "description": "Go patch updates",
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchDepNames": [
-        "go"
-      ],
-      "matchDepTypes": [
-        "golang"
-      ],
+      "description": "Automatically merge all dependency updates after successful CI",
       "matchUpdateTypes": [
-        "patch"
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "digest",
+        "lockFileMaintenance",
+        "rollback"
       ],
-      "enabled": true,
       "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "description": "Go minor updates",
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchDepNames": [
-        "go"
-      ],
-      "matchDepTypes": [
-        "golang"
-      ],
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "enabled": true
+      "automergeType": "pr"
     }
   ]
 }
