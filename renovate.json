@@ -1,4 +1,5 @@
 {
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "enabledManagers": [
     "gomod"
   ],
@@ -24,7 +25,6 @@
         "patch"
       ],
       "enabled": true,
-      "rangeStrategy": "bump",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
@@ -43,8 +43,7 @@
       "matchUpdateTypes": [
         "minor"
       ],
-      "enabled": true,
-      "rangeStrategy": "bump"
+      "enabled": true
     }
   ]
 }
